@@ -2,6 +2,8 @@
 
 A lightweight update server that serves version checks and auto-update responses for [JSTorrent](https://jstorrent.com) and [200 OK](https://ok200.app) (Tauri desktop apps), as well as other products with simple version-check needs.
 
+![Stats dashboard screenshot](stats-screenshot.png)
+
 ## How it works
 
 The server polls GitHub Releases for configured products and caches the results. Clients check for updates via HTTP and receive either a `204 No Content` (up to date) or a JSON payload with the new version, release notes, and download URLs.
