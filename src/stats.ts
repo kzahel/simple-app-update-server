@@ -265,15 +265,19 @@ function buildChartHtml(
     padding: 24px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.08);
   }
-  canvas { max-height: 500px; }
+  .chart-container canvas { width: 100% !important; height: auto !important; min-height: 300px; max-height: 500px; }
+  @media (max-width: 600px) {
+    .chart-container { padding: 12px; }
+    .chart-container canvas { min-height: 250px; }
+  }
   .meta {
     display: flex;
-    gap: 32px;
+    flex-wrap: wrap;
+    gap: 12px 32px;
     margin-top: 16px;
     font-size: 12px;
     color: #888;
   }
-  .meta span { white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -298,7 +302,7 @@ new Chart(document.getElementById('chart'), {
   },
   options: {
     responsive: true,
-    maintainAspectRatio: true,
+    maintainAspectRatio: false,
     interaction: {
       mode: 'index',
       intersect: false
@@ -306,13 +310,13 @@ new Chart(document.getElementById('chart'), {
     plugins: {
       legend: {
         position: 'bottom',
-        labels: { usePointStyle: true, padding: 16, font: { size: 12 } }
+        labels: { usePointStyle: true, padding: 12, font: { size: 11 } }
       }
     },
     scales: {
       x: {
         grid: { display: false },
-        ticks: { maxTicksLimit: 15, font: { size: 11 } }
+        ticks: { maxRotation: 45, maxTicksLimit: window.innerWidth < 600 ? 7 : 15, font: { size: 10 } }
       },
       y: {
         beginAtZero: true,
