@@ -1,0 +1,10 @@
+[
+  {
+    "id": "my-app",
+    "displayName": "My App",
+    "hostnames": ["updates.example.com"],
+    "githubRepo": "owner/repo",
+    "tagPrefix": "v",
+    "tauriUpdates": true
+  }
+]

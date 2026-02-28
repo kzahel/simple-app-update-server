@@ -33,6 +33,28 @@ All configuration is via environment variables:
 | `GITHUB_TOKEN` | _(none)_ | GitHub token for API requests (recommended to avoid rate limits) |
 | `LOG_DIR` | `./logs` | Directory for analytics logs and caches |
 | `DEFAULT_PRODUCT` | _(none)_ | Fallback product ID when hostname doesn't match |
+| `PRODUCTS_CONFIG` | `./products.json` | Path to the products configuration file |
+
+## Product Configuration
+
+Products are configured in a JSON file (`products.json` by default, override with `PRODUCTS_CONFIG` env var). Copy the sample to get started:
+
+```bash
+cp products.sample.json products.json
+```
+
+Each entry in the array has these fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Slug used in URLs, log filenames, and as the product identifier |
+| `displayName` | string | Human-readable name shown on the stats dashboard |
+| `hostnames` | string[] | Hostnames that route to this product (matched against `Host` / `X-Forwarded-Host`) |
+| `githubRepo` | string | GitHub `owner/repo` to fetch releases from |
+| `tagPrefix` | string | Release tag prefix to filter (e.g. `v`, `tauri-app-v`) |
+| `tauriUpdates` | boolean | Whether this product serves Tauri updater responses (`/tauri` endpoint) |
+
+The server will refuse to start if the config file is missing or contains invalid data. `products.json` is gitignored since it's deployment-specific.
 
 ## Development
 
