@@ -326,6 +326,7 @@ new Chart(document.getElementById('chart'), {
     }
   }
 });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 </script>
 </body>
 </html>`;

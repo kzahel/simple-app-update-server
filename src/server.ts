@@ -206,6 +206,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /sw.js — service worker for cache busting
+  if (segments[0] === "sw.js") {
+    res.writeHead(200, {
+      "Content-Type": "application/javascript",
+      "Cache-Control": "no-cache",
+    });
+    res.end(`self.addEventListener('install', e => { self.skipWaiting(); });
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(k => Promise.all(k.map(c => caches.delete(c)))));
+  self.clients.claim();
+});
+self.addEventListener('fetch', e => {
+  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+});`);
+    return;
+  }
+
   // GET /stats
   if (segments[0] === "stats") {
     const html = generateStatsHtml(
@@ -213,7 +230,10 @@ const server = http.createServer(async (req, res) => {
       product.id,
       product.displayName,
     );
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+    });
     res.end(html);
     return;
   }
