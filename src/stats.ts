@@ -257,8 +257,13 @@ function buildChartHtml(
     background: #fafafa;
     color: #1a1a1a;
   }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; }
   h1 { font-size: 20px; font-weight: 500; margin-bottom: 4px; }
   .subtitle { color: #666; font-size: 13px; margin-bottom: 24px; }
+  .theme-toggle {
+    background: none; border: 1px solid #ccc; border-radius: 6px;
+    padding: 4px 10px; cursor: pointer; font-size: 18px; line-height: 1;
+  }
   .chart-container {
     background: white;
     border-radius: 8px;
@@ -278,10 +283,22 @@ function buildChartHtml(
     font-size: 12px;
     color: #888;
   }
+  body.dark {
+    background: #1a1a2e; color: #e0e0e0;
+  }
+  body.dark .subtitle { color: #aaa; }
+  body.dark .theme-toggle { border-color: #555; color: #e0e0e0; }
+  body.dark .chart-container {
+    background: #16213e; box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  body.dark .meta { color: #999; }
 </style>
 </head>
 <body>
+<div class="header">
 <h1>${displayName} — Installed audience</h1>
+<button class="theme-toggle" id="themeToggle" title="Toggle dark mode"></button>
+</div>
 <div class="subtitle">
   Unique users, per day &middot; Latest: ${latestVersion} &middot; Client ID: ${idMethod}
 </div>
@@ -294,7 +311,28 @@ function buildChartHtml(
   <span>Generated ${now} UTC</span>
 </div>
 <script>
-new Chart(document.getElementById('chart'), {
+const isDark = () => document.body.classList.contains('dark');
+function applyTheme(dark) {
+  document.body.classList.toggle('dark', dark);
+  document.getElementById('themeToggle').textContent = dark ? '\\u2600\\uFE0F' : '\\uD83C\\uDF19';
+  localStorage.setItem('theme', dark ? 'dark' : 'light');
+  if (window._chart) {
+    const tc = dark ? '#ccc' : '#666';
+    const gc = dark ? '#2a2a4a' : '#f0f0f0';
+    window._chart.options.scales.x.ticks.color = tc;
+    window._chart.options.scales.y.ticks.color = tc;
+    window._chart.options.scales.y.grid.color = gc;
+    window._chart.options.plugins.legend.labels.color = tc;
+    window._chart.update();
+  }
+}
+const saved = localStorage.getItem('theme');
+applyTheme(saved === 'dark' || (!saved && matchMedia('(prefers-color-scheme: dark)').matches));
+document.getElementById('themeToggle').addEventListener('click', () => applyTheme(!isDark()));
+const dark = isDark();
+const tc = dark ? '#ccc' : '#666';
+const gc = dark ? '#2a2a4a' : '#f0f0f0';
+window._chart = new Chart(document.getElementById('chart'), {
   type: 'line',
   data: {
     labels: ${labelsJson},
@@ -310,18 +348,18 @@ new Chart(document.getElementById('chart'), {
     plugins: {
       legend: {
         position: 'bottom',
-        labels: { usePointStyle: true, padding: 12, font: { size: 11 } }
+        labels: { usePointStyle: true, padding: 12, font: { size: 11 }, color: tc }
       }
     },
     scales: {
       x: {
         grid: { display: false },
-        ticks: { maxRotation: 45, maxTicksLimit: window.innerWidth < 600 ? 7 : 15, font: { size: 10 } }
+        ticks: { maxRotation: 45, maxTicksLimit: window.innerWidth < 600 ? 7 : 15, font: { size: 10 }, color: tc }
       },
       y: {
         beginAtZero: true,
-        grid: { color: '#f0f0f0' },
-        ticks: { stepSize: 1, font: { size: 11 } }
+        grid: { color: gc },
+        ticks: { stepSize: 1, font: { size: 11 }, color: tc }
       }
     }
   }
