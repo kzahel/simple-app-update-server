@@ -7,6 +7,6 @@ export const config = {
   githubToken: process.env.GITHUB_TOKEN || "",
   /** Fallback product ID when hostname doesn't match (for dev/testing) */
   defaultProductId: process.env.DEFAULT_PRODUCT || "",
-  /** Path to products configuration JSON file */
+  /** Path to products config — a JSON file or a directory of JSON files */
   productsConfig: process.env.PRODUCTS_CONFIG || "./products.json",
 };

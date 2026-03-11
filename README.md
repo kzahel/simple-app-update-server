@@ -35,17 +35,27 @@ All configuration is via environment variables:
 | `GITHUB_TOKEN` | _(none)_ | GitHub token for API requests (recommended to avoid rate limits) |
 | `LOG_DIR` | `./logs` | Directory for analytics logs and caches |
 | `DEFAULT_PRODUCT` | _(none)_ | Fallback product ID when hostname doesn't match |
-| `PRODUCTS_CONFIG` | `./products.json` | Path to the products configuration file |
+| `PRODUCTS_CONFIG` | `./products.json` | Path to a JSON file or directory of JSON files |
 
 ## Product Configuration
 
-Products are configured in a JSON file (`products.json` by default, override with `PRODUCTS_CONFIG` env var). Copy the sample to get started:
+Products can be configured as a single JSON file or a directory of JSON files. Set `PRODUCTS_CONFIG` to point at either.
 
+**Single file** (`products.json` — the default):
 ```bash
 cp products.sample.json products.json
 ```
 
-Each entry in the array has these fields:
+**Directory** (e.g. `products.d/`): each `.json` file contains one product object or an array. Files are loaded in alphabetical order. This lets each project repo own its own config file.
+
+```bash
+mkdir products.d
+# Each repo contributes its own file:
+# products.d/jstorrent.json
+# products.d/yepanywhere.json
+```
+
+Each product has these fields:
 
 | Field | Type | Description |
 |---|---|---|
@@ -55,8 +65,11 @@ Each entry in the array has these fields:
 | `githubRepo` | string | GitHub `owner/repo` to fetch releases from |
 | `tagPrefix` | string | Release tag prefix to filter (e.g. `v`, `tauri-app-v`) |
 | `tauriUpdates` | boolean | Whether this product serves Tauri updater responses (`/tauri` endpoint) |
+| `pathPrefix` | string? | Optional path prefix for products sharing a hostname (e.g. `"/bridge"`) |
 
-The server will refuse to start if the config file is missing or contains invalid data. `products.json` is gitignored since it's deployment-specific.
+Products sharing a hostname are differentiated by `pathPrefix`. Requests to `/bridge/version` route to the product with `pathPrefix: "/bridge"`, while `/version` routes to the one without a prefix.
+
+The server will refuse to start if the config is missing or contains invalid data. `products.json` is gitignored since it's deployment-specific.
 
 ## Development
 

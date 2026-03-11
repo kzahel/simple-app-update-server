@@ -19,73 +19,98 @@ export interface ProductConfig {
   pathPrefix?: string;
 }
 
-function validateProducts(data: unknown): ProductConfig[] {
-  if (!Array.isArray(data)) {
-    throw new Error("Products config must be a JSON array");
+function validateProduct(p: unknown, label: string): ProductConfig {
+  if (typeof p !== "object" || p === null) {
+    throw new Error(`${label}: must be an object`);
   }
-  if (data.length === 0) {
-    throw new Error("Products config must contain at least one product");
-  }
-  for (let i = 0; i < data.length; i++) {
-    const p = data[i];
-    const prefix = `products[${i}]`;
-    if (typeof p !== "object" || p === null) {
-      throw new Error(`${prefix}: must be an object`);
-    }
-    for (const key of ["id", "displayName", "githubRepo", "tagPrefix"]) {
-      if (typeof (p as Record<string, unknown>)[key] !== "string") {
-        throw new Error(`${prefix}.${key}: must be a string`);
-      }
-    }
-    if (!Array.isArray((p as Record<string, unknown>).hostnames)) {
-      throw new Error(`${prefix}.hostnames: must be an array of strings`);
-    }
-    if (typeof (p as Record<string, unknown>).tauriUpdates !== "boolean") {
-      throw new Error(`${prefix}.tauriUpdates: must be a boolean`);
-    }
-    const pathPrefix = (p as Record<string, unknown>).pathPrefix;
-    if (pathPrefix !== undefined) {
-      if (typeof pathPrefix !== "string" || !pathPrefix.startsWith("/")) {
-        throw new Error(
-          `${prefix}.pathPrefix: must be a string starting with "/"`,
-        );
-      }
+  for (const key of ["id", "displayName", "githubRepo", "tagPrefix"]) {
+    if (typeof (p as Record<string, unknown>)[key] !== "string") {
+      throw new Error(`${label}.${key}: must be a string`);
     }
   }
-  return data as ProductConfig[];
+  if (!Array.isArray((p as Record<string, unknown>).hostnames)) {
+    throw new Error(`${label}.hostnames: must be an array of strings`);
+  }
+  if (typeof (p as Record<string, unknown>).tauriUpdates !== "boolean") {
+    throw new Error(`${label}.tauriUpdates: must be a boolean`);
+  }
+  const pathPrefix = (p as Record<string, unknown>).pathPrefix;
+  if (pathPrefix !== undefined) {
+    if (typeof pathPrefix !== "string" || !pathPrefix.startsWith("/")) {
+      throw new Error(
+        `${label}.pathPrefix: must be a string starting with "/"`,
+      );
+    }
+  }
+  return p as ProductConfig;
+}
+
+/** Parse a JSON file that contains either a single product object or an array of products. */
+function parseProductFile(filePath: string): ProductConfig[] {
+  const raw = fs.readFileSync(filePath, "utf-8");
+  const data: unknown = JSON.parse(raw);
+  const fileName = path.basename(filePath);
+
+  if (Array.isArray(data)) {
+    return data.map((item, i) => validateProduct(item, `${fileName}[${i}]`));
+  }
+  return [validateProduct(data, fileName)];
 }
 
 function loadProducts(): ProductConfig[] {
   const configPath = path.resolve(config.productsConfig);
-  let raw: string;
+
+  let stat: fs.Stats;
   try {
-    raw = fs.readFileSync(configPath, "utf-8");
+    stat = fs.statSync(configPath);
   } catch {
     console.error(
-      `\nFATAL: Cannot read products config file: ${configPath}\n` +
-        "Set PRODUCTS_CONFIG env var or create products.json at the project root.\n" +
+      `\nFATAL: Cannot read products config: ${configPath}\n` +
+        "Set PRODUCTS_CONFIG env var or create products.json (file) or products.d/ (directory).\n" +
         "See products.sample.json for the expected format.\n",
     );
     process.exit(1);
   }
 
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch (err) {
-    console.error(
-      `\nFATAL: Invalid JSON in products config: ${configPath}\n`,
-      err,
-    );
+  const allProducts: ProductConfig[] = [];
+
+  if (stat.isDirectory()) {
+    const files = fs
+      .readdirSync(configPath)
+      .filter((f) => f.endsWith(".json"))
+      .sort();
+    if (files.length === 0) {
+      console.error(
+        `\nFATAL: No .json files found in products directory: ${configPath}\n`,
+      );
+      process.exit(1);
+    }
+    for (const file of files) {
+      try {
+        allProducts.push(...parseProductFile(path.join(configPath, file)));
+      } catch (err) {
+        console.error(
+          `\nFATAL: Invalid product config in ${path.join(configPath, file)}\n`,
+          err,
+        );
+        process.exit(1);
+      }
+    }
+  } else {
+    try {
+      allProducts.push(...parseProductFile(configPath));
+    } catch (err) {
+      console.error(`\nFATAL: Invalid products config: ${configPath}\n`, err);
+      process.exit(1);
+    }
+  }
+
+  if (allProducts.length === 0) {
+    console.error("\nFATAL: No products defined in config\n");
     process.exit(1);
   }
 
-  try {
-    return validateProducts(data);
-  } catch (err) {
-    console.error(`\nFATAL: Invalid products config: ${configPath}\n`, err);
-    process.exit(1);
-  }
+  return allProducts;
 }
 
 export const products: ProductConfig[] = loadProducts();
