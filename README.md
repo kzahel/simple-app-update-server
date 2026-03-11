@@ -1,6 +1,6 @@
 # simple-app-update-server
 
-A lightweight update server that serves version checks and auto-update responses for [JSTorrent](https://jstorrent.com) and [200 OK](https://ok200.app) (Tauri desktop apps), as well as other products with simple version-check needs.
+A lightweight, self-hosted update server for desktop and mobile apps. Polls GitHub Releases, caches results, and serves version checks over HTTP.
 
 ![Stats dashboard screenshot](stats-screenshot.png)
 
@@ -13,7 +13,7 @@ Two update protocols are supported:
 - **Tauri updater** (`/tauri/:target/:arch/:currentVersion`) — returns the platform-specific binary URL and signature expected by Tauri's built-in updater.
 - **Simple version check** (`/version` or `/version/:currentVersion`) — returns version + release notes JSON, suitable for any app.
 
-Products are routed by hostname (e.g. `updates.jstorrent.com`, `updates.ok200.app`), so a single instance serves multiple apps.
+Products are routed by hostname, so a single instance serves multiple apps. Products sharing a hostname can be differentiated by path prefix.
 
 ## Endpoints
 
@@ -97,7 +97,7 @@ Generate a password hash:
 caddy hash-password --plaintext 'your-password'
 ```
 
-Example Caddyfile serving both products with `/stats` behind basic auth:
+Example Caddyfile with `/stats` behind basic auth:
 
 ```caddyfile
 (update-server) {
@@ -111,13 +111,9 @@ Example Caddyfile serving both products with `/stats` behind basic auth:
 	}
 }
 
-updates.jstorrent.com {
-	import update-server
-}
-
-updates.ok200.app {
+updates.my-app.com {
 	import update-server
 }
 ```
 
-Caddy will automatically provision TLS certificates for both hostnames via Let's Encrypt. The update check endpoints (`/tauri/*`, `/version/*`) remain unauthenticated so apps can check freely, while `/stats` requires a login.
+Caddy will automatically provision TLS certificates via Let's Encrypt. Update check endpoints (`/tauri/*`, `/version/*`) remain unauthenticated so apps can check freely, while `/stats` requires a login.
