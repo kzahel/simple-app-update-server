@@ -11,7 +11,7 @@ import {
 } from "./github.js";
 import { NotesStore } from "./notes-store.js";
 import type { ProductConfig } from "./products.js";
-import { productByHostname, productById, products } from "./products.js";
+import { findProduct, productById, products } from "./products.js";
 import { generateStatsHtml } from "./stats.js";
 import { compareVersions, isValidVersion } from "./version.js";
 
@@ -64,15 +64,24 @@ for (const product of products) {
   }
 }
 
-function resolveProduct(req: http.IncomingMessage): ProductConfig | undefined {
+function resolveProduct(
+  req: http.IncomingMessage,
+  pathname: string,
+): { product: ProductConfig; remainingPath: string } | undefined {
   // Check x-forwarded-host first (reverse proxy), then Host header
   const forwardedHost = req.headers["x-forwarded-host"];
   const hostHeader =
     typeof forwardedHost === "string" ? forwardedHost : req.headers.host || "";
   const host = hostHeader.split(":")[0]; // strip port
-  return (
-    productByHostname.get(host) ?? productById.get(config.defaultProductId)
-  );
+
+  const found = findProduct(host, pathname);
+  if (found) return found;
+
+  const defaultProduct = productById.get(config.defaultProductId);
+  if (defaultProduct)
+    return { product: defaultProduct, remainingPath: pathname };
+
+  return undefined;
 }
 
 function getClientIp(req: http.IncomingMessage): string {
@@ -193,12 +202,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Resolve product for all other routes
-  const product = resolveProduct(req);
-  if (!product) {
+  // Resolve product (strips pathPrefix if present)
+  const resolved = resolveProduct(req, pathname);
+  if (!resolved) {
     sendJson(res, 404, { error: "Unknown product for this hostname" });
     return;
   }
+  const { product, remainingPath } = resolved;
+  const routeSegments = remainingPath.split("/").filter(Boolean);
 
   const state = productStates.get(product.id);
   if (!state) {
@@ -207,7 +218,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // GET /sw.js — service worker for cache busting
-  if (segments[0] === "sw.js") {
+  if (routeSegments[0] === "sw.js") {
     res.writeHead(200, {
       "Content-Type": "application/javascript",
       "Cache-Control": "no-cache",
@@ -224,7 +235,7 @@ self.addEventListener('fetch', e => {
   }
 
   // GET /stats
-  if (segments[0] === "stats") {
+  if (routeSegments[0] === "stats") {
     const html = generateStatsHtml(
       config.logDir,
       product.id,
@@ -239,12 +250,12 @@ self.addEventListener('fetch', e => {
   }
 
   // GET /tauri/:target/:arch/:currentVersion — Tauri products only
-  if (segments[0] === "tauri" && segments.length === 4) {
+  if (routeSegments[0] === "tauri" && routeSegments.length === 4) {
     if (!product.tauriUpdates) {
       sendJson(res, 404, { error: "This product does not use Tauri updates" });
       return;
     }
-    const [, target, arch, currentVersion] = segments;
+    const [, target, arch, currentVersion] = routeSegments;
     if (!isValidVersion(currentVersion)) {
       sendJson(res, 400, { error: "Invalid version format" });
       return;
@@ -267,8 +278,8 @@ self.addEventListener('fetch', e => {
 
   // GET /version — latest version info (all products)
   // GET /version/:currentVersion — check for update with analytics
-  if (segments[0] === "version") {
-    const currentVersion = segments[1];
+  if (routeSegments[0] === "version") {
+    const currentVersion = routeSegments[1];
     if (currentVersion && !isValidVersion(currentVersion)) {
       sendJson(res, 400, { error: "Invalid version format" });
       return;

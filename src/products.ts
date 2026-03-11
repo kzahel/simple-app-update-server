@@ -15,6 +15,8 @@ export interface ProductConfig {
   tagPrefix: string;
   /** Whether this product uses Tauri update protocol (latest.json in GitHub releases) */
   tauriUpdates: boolean;
+  /** Optional path prefix for products sharing a hostname (e.g. "/bridge"). Must start with "/". */
+  pathPrefix?: string;
 }
 
 function validateProducts(data: unknown): ProductConfig[] {
@@ -40,6 +42,14 @@ function validateProducts(data: unknown): ProductConfig[] {
     }
     if (typeof (p as Record<string, unknown>).tauriUpdates !== "boolean") {
       throw new Error(`${prefix}.tauriUpdates: must be a boolean`);
+    }
+    const pathPrefix = (p as Record<string, unknown>).pathPrefix;
+    if (pathPrefix !== undefined) {
+      if (typeof pathPrefix !== "string" || !pathPrefix.startsWith("/")) {
+        throw new Error(
+          `${prefix}.pathPrefix: must be a string starting with "/"`,
+        );
+      }
     }
   }
   return data as ProductConfig[];
@@ -80,11 +90,13 @@ function loadProducts(): ProductConfig[] {
 
 export const products: ProductConfig[] = loadProducts();
 
-/** Build hostname -> product lookup map */
-export const productByHostname = new Map<string, ProductConfig>();
+/** Build hostname -> products lookup map (multiple products can share a hostname via pathPrefix) */
+export const productsByHostname = new Map<string, ProductConfig[]>();
 for (const p of products) {
   for (const h of p.hostnames) {
-    productByHostname.set(h, p);
+    const existing = productsByHostname.get(h) ?? [];
+    existing.push(p);
+    productsByHostname.set(h, existing);
   }
 }
 
@@ -92,4 +104,44 @@ for (const p of products) {
 export const productById = new Map<string, ProductConfig>();
 for (const p of products) {
   productById.set(p.id, p);
+}
+
+/**
+ * Find the product for a hostname + pathname.
+ * Products with a pathPrefix are checked first (longest prefix wins).
+ * A product without a pathPrefix is the fallback for that hostname.
+ */
+export function findProduct(
+  hostname: string,
+  pathname: string,
+): { product: ProductConfig; remainingPath: string } | undefined {
+  const candidates = productsByHostname.get(hostname);
+  if (!candidates) return undefined;
+
+  // Sort: products with pathPrefix first (longest first), then without
+  const sorted = [...candidates].sort((a, b) => {
+    if (a.pathPrefix && !b.pathPrefix) return -1;
+    if (!a.pathPrefix && b.pathPrefix) return 1;
+    if (a.pathPrefix && b.pathPrefix)
+      return b.pathPrefix.length - a.pathPrefix.length;
+    return 0;
+  });
+
+  for (const p of sorted) {
+    if (p.pathPrefix) {
+      if (
+        pathname === p.pathPrefix ||
+        pathname.startsWith(`${p.pathPrefix}/`)
+      ) {
+        return {
+          product: p,
+          remainingPath: pathname.slice(p.pathPrefix.length) || "/",
+        };
+      }
+    } else {
+      return { product: p, remainingPath: pathname };
+    }
+  }
+
+  return undefined;
 }

@@ -69,7 +69,11 @@ vi.mock("../src/github.js", async (importOriginal) => {
   return {
     ...actual,
     fetchTauriReleases: vi.fn().mockResolvedValue(MOCK_TAURI_RESULT),
-    fetchSimpleReleases: vi.fn().mockResolvedValue(MOCK_SIMPLE_RESULT),
+    fetchSimpleReleases: vi.fn().mockImplementation((product) => {
+      if (product.tagPrefix === "bridge-v")
+        return Promise.resolve(MOCK_BRIDGE_RESULT);
+      return Promise.resolve(MOCK_SIMPLE_RESULT);
+    }),
   };
 });
 
@@ -85,6 +89,16 @@ vi.mock("../src/config.js", () => ({
     defaultProductId: "test-tauri",
   },
 }));
+
+// Mock a second simple release for the prefixed product
+const MOCK_BRIDGE_RESULT: SimpleFetchResult = {
+  latest: {
+    version: "0.0.1",
+    notes: "- Initial bridge release",
+    pub_date: "2026-03-11T00:00:00.000Z",
+  },
+  freshNotes: [{ version: "0.0.1", notes: "- Initial bridge release" }],
+};
 
 // Mock products
 vi.mock("../src/products.js", () => {
@@ -105,16 +119,57 @@ vi.mock("../src/products.js", () => {
       tagPrefix: "v",
       tauriUpdates: false,
     },
+    {
+      id: "test-bridge",
+      displayName: "Test Bridge",
+      hostnames: ["simple.test"],
+      githubRepo: "test/simple",
+      tagPrefix: "bridge-v",
+      tauriUpdates: false,
+      pathPrefix: "/bridge",
+    },
   ];
 
-  const productByHostname = new Map();
+  const productsByHostname = new Map();
   const productById = new Map();
   for (const p of products) {
-    for (const h of p.hostnames) productByHostname.set(h, p);
+    for (const h of p.hostnames) {
+      const existing = productsByHostname.get(h) ?? [];
+      existing.push(p);
+      productsByHostname.set(h, existing);
+    }
     productById.set(p.id, p);
   }
 
-  return { products, productByHostname, productById };
+  function findProduct(hostname: string, pathname: string) {
+    const candidates = productsByHostname.get(hostname);
+    if (!candidates) return undefined;
+    const sorted = [...candidates].sort((a, b) => {
+      if (a.pathPrefix && !b.pathPrefix) return -1;
+      if (!a.pathPrefix && b.pathPrefix) return 1;
+      if (a.pathPrefix && b.pathPrefix)
+        return b.pathPrefix.length - a.pathPrefix.length;
+      return 0;
+    });
+    for (const p of sorted) {
+      if (p.pathPrefix) {
+        if (
+          pathname === p.pathPrefix ||
+          pathname.startsWith(`${p.pathPrefix}/`)
+        ) {
+          return {
+            product: p,
+            remainingPath: pathname.slice(p.pathPrefix.length) || "/",
+          };
+        }
+      } else {
+        return { product: p, remainingPath: pathname };
+      }
+    }
+    return undefined;
+  }
+
+  return { products, productsByHostname, productById, findProduct };
 });
 
 let server: http.Server;
@@ -345,6 +400,42 @@ describe("Other routes", () => {
     const res = await fetch(`${baseUrl}/tauri/darwin/aarch64`, {
       headers: { "X-Forwarded-Host": "tauri.test" },
     });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("Path prefix routing (Host: simple.test)", () => {
+  const headers = { "X-Forwarded-Host": "simple.test" };
+
+  it("routes /bridge/version to the bridge product", async () => {
+    const res = await fetch(`${baseUrl}/bridge/version`, { headers });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.version).toBe("0.0.1");
+    expect(body.notes).toBe("- Initial bridge release");
+  });
+
+  it("routes /version to the non-prefixed product", async () => {
+    const res = await fetch(`${baseUrl}/version`, { headers });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.version).toBe("0.4.6");
+  });
+
+  it("returns 204 for bridge /version/:currentVersion when up to date", async () => {
+    const res = await fetch(`${baseUrl}/bridge/version/0.0.1`, { headers });
+    expect(res.status).toBe(204);
+  });
+
+  it("returns update for bridge /version/:currentVersion when behind", async () => {
+    const res = await fetch(`${baseUrl}/bridge/version/0.0.0`, { headers });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.version).toBe("0.0.1");
+  });
+
+  it("returns 404 for unknown path under prefix", async () => {
+    const res = await fetch(`${baseUrl}/bridge/unknown`, { headers });
     expect(res.status).toBe(404);
   });
 });
