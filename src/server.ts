@@ -2,9 +2,14 @@ import * as http from "node:http";
 import { AnalyticsLogger } from "./analytics.js";
 import { Cache } from "./cache.js";
 import { config } from "./config.js";
-import type { LatestJson, SimpleRelease } from "./github.js";
+import type {
+  ArtifactManifestRelease,
+  LatestJson,
+  SimpleRelease,
+} from "./github.js";
 import {
   aggregateNotes,
+  fetchArtifactManifestRelease,
   fetchSimpleReleases,
   fetchTauriReleases,
   findPlatformUpdate,
@@ -17,18 +22,29 @@ import { compareVersions, isValidVersion } from "./version.js";
 
 // Per-product state
 interface TauriProductState {
+  kind: "tauri";
   product: ProductConfig;
   cache: Cache<LatestJson>;
   notesStore: NotesStore;
 }
 
 interface SimpleProductState {
+  kind: "simple";
   product: ProductConfig;
   cache: Cache<SimpleRelease>;
   notesStore: NotesStore;
 }
 
-type ProductState = TauriProductState | SimpleProductState;
+interface ArtifactManifestProductState {
+  kind: "artifact-manifest";
+  product: ProductConfig;
+  cache: Cache<ArtifactManifestRelease>;
+}
+
+type ProductState =
+  | TauriProductState
+  | SimpleProductState
+  | ArtifactManifestProductState;
 
 const analytics = new AnalyticsLogger(config.logDir);
 const productStates = new Map<string, ProductState>();
@@ -37,7 +53,24 @@ for (const product of products) {
   const productDir = `${config.logDir}/${product.id}`;
   const notesStore = new NotesStore(`${productDir}/notes-cache.json`);
 
-  if (product.tauriUpdates) {
+  if (product.artifactManifest) {
+    const cache = new Cache<ArtifactManifestRelease>(
+      async () => {
+        const result = await fetchArtifactManifestRelease(
+          product,
+          config.githubToken,
+        );
+        return result?.latest ?? null;
+      },
+      config.cacheTtlMs,
+      `${productDir}/artifact-manifest-cache.json`,
+    );
+    productStates.set(product.id, {
+      kind: "artifact-manifest",
+      product,
+      cache,
+    });
+  } else if (product.tauriUpdates) {
     const cache = new Cache<LatestJson>(
       async () => {
         const result = await fetchTauriReleases(product, config.githubToken);
@@ -48,7 +81,12 @@ for (const product of products) {
       config.cacheTtlMs,
       `${productDir}/latest-cache.json`,
     );
-    productStates.set(product.id, { product, cache, notesStore });
+    productStates.set(product.id, {
+      kind: "tauri",
+      product,
+      cache,
+      notesStore,
+    });
   } else {
     const cache = new Cache<SimpleRelease>(
       async () => {
@@ -60,7 +98,12 @@ for (const product of products) {
       config.cacheTtlMs,
       `${productDir}/latest-cache.json`,
     );
-    productStates.set(product.id, { product, cache, notesStore });
+    productStates.set(product.id, {
+      kind: "simple",
+      product,
+      cache,
+      notesStore,
+    });
   }
 }
 
@@ -186,6 +229,50 @@ async function handleVersionCheck(
   });
 }
 
+async function handleArtifactManifestCheck(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  state: ArtifactManifestProductState,
+  arch?: string,
+  currentVersion?: string,
+): Promise<void> {
+  const latest = await state.cache.get();
+  if (!latest) {
+    sendJson(res, 500, { error: "Unable to fetch artifact manifest" });
+    return;
+  }
+
+  if (currentVersion) {
+    const updateAvailable = compareVersions(latest.version, currentVersion) > 0;
+    analytics.log({
+      ts: new Date().toISOString(),
+      product: state.product.id,
+      ip: getClientIp(req),
+      target: "crostini",
+      arch: arch ?? "",
+      currentVersion,
+      latestVersion: latest.version,
+      updateAvailable,
+      userAgent: req.headers["user-agent"] || "",
+      cfuId: (req.headers["x-cfu-id"] as string) || "",
+      checkReason: (req.headers["x-check-reason"] as string) || "",
+    });
+    if (!updateAvailable) {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+  }
+
+  sendJson(res, 200, {
+    schemaVersion: 1,
+    version: latest.version,
+    publishedAt: latest.pub_date,
+    manifest: latest.manifest,
+    signature: latest.signature,
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method !== "GET") {
     res.writeHead(405);
@@ -214,6 +301,41 @@ const server = http.createServer(async (req, res) => {
   const state = productStates.get(product.id);
   if (!state) {
     sendJson(res, 500, { error: "Product state not initialized" });
+    return;
+  }
+
+  if (routeSegments[0] === "manifest") {
+    if (state.kind !== "artifact-manifest") {
+      sendJson(res, 404, {
+        error: "This product does not publish an artifact manifest",
+      });
+      return;
+    }
+    const routeArguments = routeSegments.slice(1);
+    let arch: string | undefined;
+    let currentVersion: string | undefined;
+    if (routeArguments.length === 1) {
+      [currentVersion] = routeArguments;
+    } else if (routeArguments.length === 2) {
+      [arch, currentVersion] = routeArguments;
+      if (arch !== "x86_64" && arch !== "aarch64") {
+        sendJson(res, 400, { error: "Invalid architecture" });
+        return;
+      }
+    } else if (routeArguments.length > 2) {
+      sendJson(res, 404, { error: "Invalid artifact manifest route" });
+      return;
+    }
+    if (currentVersion && !isValidVersion(currentVersion)) {
+      sendJson(res, 400, { error: "Invalid version format" });
+      return;
+    }
+    try {
+      await handleArtifactManifestCheck(req, res, state, arch, currentVersion);
+    } catch (err) {
+      console.error("Artifact manifest check error:", err);
+      sendJson(res, 500, { error: "Internal server error" });
+    }
     return;
   }
 
@@ -282,6 +404,19 @@ self.addEventListener('fetch', e => {
     const currentVersion = routeSegments[1];
     if (currentVersion && !isValidVersion(currentVersion)) {
       sendJson(res, 400, { error: "Invalid version format" });
+      return;
+    }
+
+    if (state.kind === "artifact-manifest") {
+      const latest = await state.cache.get();
+      if (!latest) {
+        sendJson(res, 500, { error: "Unable to fetch release info" });
+        return;
+      }
+      sendJson(res, 200, {
+        version: latest.version,
+        pub_date: latest.pub_date,
+      });
       return;
     }
 

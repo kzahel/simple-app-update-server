@@ -12,6 +12,7 @@ Two update protocols are supported:
 
 - **Tauri updater** (`/tauri/:target/:arch/:currentVersion`) — returns the platform-specific binary URL and signature expected by Tauri's built-in updater.
 - **Simple version check** (`/version` or `/version/:currentVersion`) — returns version + release notes JSON, suitable for any app.
+- **Signed artifact manifest** (`/manifest/:arch/:currentVersion`) — returns an exact release manifest and detached signature as base64. The server routes metadata, while the native client authenticates the manifest with its embedded key.
 
 Products are routed by hostname, so a single instance serves multiple apps. Products sharing a hostname can be differentiated by path prefix.
 
@@ -23,6 +24,8 @@ Products are routed by hostname, so a single instance serves multiple apps. Prod
 | `GET /tauri/:target/:arch/:version` | Tauri update check (204 or update JSON) |
 | `GET /version` | Latest version info |
 | `GET /version/:currentVersion` | Version check with analytics (204 or update JSON) |
+| `GET /manifest[/:currentVersion]` | Latest signed artifact-manifest envelope |
+| `GET /manifest/:arch/:currentVersion` | Architecture-aware manifest check with analytics |
 | `GET /stats` | Per-product analytics dashboard |
 
 ## Configuration
@@ -66,6 +69,7 @@ Each product has these fields:
 | `tagPrefix` | string | Release tag prefix to filter (e.g. `v`, `tauri-app-v`) |
 | `tauriUpdates` | boolean | Whether this product serves Tauri updater responses (`/tauri` endpoint) |
 | `pathPrefix` | string? | Optional path prefix for products sharing a hostname (e.g. `"/bridge"`) |
+| `artifactManifest` | object? | Exact `manifestAsset` and `signatureAsset` names for signed native releases |
 
 Products sharing a hostname are differentiated by `pathPrefix`. Requests to `/bridge/version` route to the product with `pathPrefix: "/bridge"`, while `/version` routes to the one without a prefix.
 

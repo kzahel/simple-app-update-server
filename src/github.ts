@@ -14,6 +14,15 @@ export interface SimpleRelease {
   pub_date: string;
 }
 
+export interface ArtifactManifestRelease {
+  version: string;
+  pub_date: string;
+  /** Exact release asset bytes encoded for transport without reserialization. */
+  manifest: string;
+  /** Exact detached-signature asset bytes encoded for transport. */
+  signature: string;
+}
+
 export interface PlatformUpdate {
   version: string;
   notes: string;
@@ -37,11 +46,41 @@ export interface SimpleFetchResult {
   freshNotes: VersionNotes[];
 }
 
+export interface ArtifactManifestFetchResult {
+  latest: ArtifactManifestRelease;
+}
+
 interface GitHubRelease {
   tag_name: string;
   body?: string;
   published_at?: string;
+  draft?: boolean;
+  prerelease?: boolean;
   assets: Array<{ name: string; browser_download_url: string }>;
+}
+
+const MAX_ARTIFACT_MANIFEST_BYTES = 128 * 1024;
+
+async function fetchReleaseAsset(
+  product: ProductConfig,
+  url: string,
+): Promise<Buffer> {
+  const response = await fetch(url, {
+    headers: { "User-Agent": `${product.id}-update-server` },
+    redirect: "follow",
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch artifact manifest asset: ${response.status}`,
+    );
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0 || bytes.length > MAX_ARTIFACT_MANIFEST_BYTES) {
+    throw new Error(
+      `Artifact manifest asset has invalid size: ${bytes.length}`,
+    );
+  }
+  return bytes;
 }
 
 /** Strip the "## Download" section that CI appends to release bodies. */
@@ -150,6 +189,63 @@ export async function fetchSimpleReleases(
   const freshNotes = extractVersionNotes(filtered, product.tagPrefix);
 
   return { latest, freshNotes };
+}
+
+/** Fetch an exact manifest/signature pair from one immutable GitHub release. */
+export async function fetchArtifactManifestRelease(
+  product: ProductConfig,
+  githubToken: string,
+): Promise<ArtifactManifestFetchResult | null> {
+  const artifactManifest = product.artifactManifest;
+  if (!artifactManifest) {
+    throw new Error(`${product.id} has no artifactManifest configuration`);
+  }
+  const headers = makeHeaders(product, githubToken);
+  const response = await fetch(
+    `https://api.github.com/repos/${product.githubRepo}/releases?per_page=100`,
+    { headers },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `GitHub API returned ${response.status}: ${response.statusText}`,
+    );
+  }
+
+  const releases = (await response.json()) as GitHubRelease[];
+  const latestRelease = releases.find(
+    (release) =>
+      !release.draft &&
+      !release.prerelease &&
+      release.tag_name.startsWith(product.tagPrefix),
+  );
+  if (!latestRelease) return null;
+
+  const version = latestRelease.tag_name.slice(product.tagPrefix.length);
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+    throw new Error(
+      `${latestRelease.tag_name}: artifact release version is invalid`,
+    );
+  }
+  const manifestAsset = latestRelease.assets.find(
+    (asset) => asset.name === artifactManifest.manifestAsset,
+  );
+  const signatureAsset = latestRelease.assets.find(
+    (asset) => asset.name === artifactManifest.signatureAsset,
+  );
+  if (!manifestAsset || !signatureAsset) return null;
+
+  const [manifest, signature] = await Promise.all([
+    fetchReleaseAsset(product, manifestAsset.browser_download_url),
+    fetchReleaseAsset(product, signatureAsset.browser_download_url),
+  ]);
+  return {
+    latest: {
+      version,
+      pub_date: latestRelease.published_at || new Date().toISOString(),
+      manifest: manifest.toString("base64"),
+      signature: signature.toString("base64"),
+    },
+  };
 }
 
 /** Aggregate release notes for all versions newer than currentVersion. */

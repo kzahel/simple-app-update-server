@@ -17,6 +17,11 @@ export interface ProductConfig {
   tauriUpdates: boolean;
   /** Optional path prefix for products sharing a hostname (e.g. "/bridge"). Must start with "/". */
   pathPrefix?: string;
+  /** Optional signed artifact-manifest assets for non-Tauri native clients. */
+  artifactManifest?: {
+    manifestAsset: string;
+    signatureAsset: string;
+  };
 }
 
 function validateProduct(p: unknown, label: string): ProductConfig {
@@ -39,6 +44,26 @@ function validateProduct(p: unknown, label: string): ProductConfig {
     if (typeof pathPrefix !== "string" || !pathPrefix.startsWith("/")) {
       throw new Error(
         `${label}.pathPrefix: must be a string starting with "/"`,
+      );
+    }
+  }
+  const artifactManifest = (p as Record<string, unknown>).artifactManifest;
+  if (artifactManifest !== undefined) {
+    if (
+      typeof artifactManifest !== "object" ||
+      artifactManifest === null ||
+      typeof (artifactManifest as Record<string, unknown>).manifestAsset !==
+        "string" ||
+      typeof (artifactManifest as Record<string, unknown>).signatureAsset !==
+        "string"
+    ) {
+      throw new Error(
+        `${label}.artifactManifest: must contain manifestAsset and signatureAsset strings`,
+      );
+    }
+    if ((p as Record<string, unknown>).tauriUpdates !== false) {
+      throw new Error(
+        `${label}: artifactManifest and tauriUpdates cannot both be enabled`,
       );
     }
   }

@@ -9,7 +9,11 @@ import {
   it,
   vi,
 } from "vitest";
-import type { SimpleFetchResult, TauriFetchResult } from "../src/github.js";
+import type {
+  ArtifactManifestFetchResult,
+  SimpleFetchResult,
+  TauriFetchResult,
+} from "../src/github.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: test helper for JSON responses
 async function json(res: Response): Promise<any> {
@@ -63,11 +67,23 @@ const MOCK_SIMPLE_RESULT: SimpleFetchResult = {
   ],
 };
 
+const MOCK_ARTIFACT_RESULT: ArtifactManifestFetchResult = {
+  latest: {
+    version: "0.1.0",
+    pub_date: "2026-08-02T00:00:00.000Z",
+    manifest: Buffer.from("ok200-crostini-release-v1\n").toString("base64"),
+    signature: Buffer.from("detached signature\n").toString("base64"),
+  },
+};
+
 // Mock github module before importing server
 vi.mock("../src/github.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/github.js")>();
   return {
     ...actual,
+    fetchArtifactManifestRelease: vi
+      .fn()
+      .mockResolvedValue(MOCK_ARTIFACT_RESULT),
     fetchTauriReleases: vi.fn().mockResolvedValue(MOCK_TAURI_RESULT),
     fetchSimpleReleases: vi.fn().mockImplementation((product) => {
       if (product.tagPrefix === "bridge-v")
@@ -127,6 +143,19 @@ vi.mock("../src/products.js", () => {
       tagPrefix: "bridge-v",
       tauriUpdates: false,
       pathPrefix: "/bridge",
+    },
+    {
+      id: "test-crostini",
+      displayName: "Test Crostini Component",
+      hostnames: ["simple.test"],
+      githubRepo: "test/simple",
+      tagPrefix: "crostini-v",
+      tauriUpdates: false,
+      pathPrefix: "/crostini",
+      artifactManifest: {
+        manifestAsset: "release.manifest",
+        signatureAsset: "release.manifest.minisig",
+      },
     },
   ];
 
@@ -437,5 +466,63 @@ describe("Path prefix routing (Host: simple.test)", () => {
   it("returns 404 for unknown path under prefix", async () => {
     const res = await fetch(`${baseUrl}/bridge/unknown`, { headers });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("Signed artifact manifests (Host: simple.test)", () => {
+  const headers = { "X-Forwarded-Host": "simple.test" };
+
+  it("returns one atomic base64 manifest/signature envelope", async () => {
+    const res = await fetch(`${baseUrl}/crostini/manifest/x86_64/0.0.0`, {
+      headers,
+    });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body).toEqual({
+      schemaVersion: 1,
+      version: "0.1.0",
+      publishedAt: "2026-08-02T00:00:00.000Z",
+      manifest: MOCK_ARTIFACT_RESULT.latest.manifest,
+      signature: MOCK_ARTIFACT_RESULT.latest.signature,
+    });
+  });
+
+  it("returns 204 when the native component is current or ahead", async () => {
+    for (const version of ["0.1.0", "0.2.0"]) {
+      const res = await fetch(
+        `${baseUrl}/crostini/manifest/aarch64/${version}`,
+        { headers },
+      );
+      expect(res.status).toBe(204);
+    }
+  });
+
+  it("supports an unversioned first-install request", async () => {
+    const res = await fetch(`${baseUrl}/crostini/manifest`, { headers });
+    expect(res.status).toBe(200);
+    expect((await json(res)).version).toBe("0.1.0");
+  });
+
+  it("rejects invalid architecture and version segments", async () => {
+    expect(
+      (
+        await fetch(`${baseUrl}/crostini/manifest/mips/0.0.0`, {
+          headers,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await fetch(`${baseUrl}/crostini/manifest/x86_64/bad`, {
+          headers,
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("returns artifact release version through the generic version route", async () => {
+    const res = await fetch(`${baseUrl}/crostini/version`, { headers });
+    expect(res.status).toBe(200);
+    expect((await json(res)).version).toBe("0.1.0");
   });
 });
