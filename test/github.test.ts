@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type ArtifactManifestFetchResult,
   fetchArtifactManifestRelease,
+  fetchSimpleReleases,
+  fetchTauriReleases,
 } from "../src/github.js";
 import type { ProductConfig } from "../src/products.js";
 
@@ -16,6 +18,15 @@ const PRODUCT: ProductConfig = {
     manifestAsset: "release.manifest",
     signatureAsset: "release.manifest.minisig",
   },
+};
+
+const TAURI_PRODUCT: ProductConfig = {
+  id: "desktop",
+  displayName: "Desktop",
+  hostnames: ["updates.example.test"],
+  githubRepo: "owner/repository",
+  tagPrefix: "desktop-v",
+  tauriUpdates: true,
 };
 
 function githubRelease(version = "0.1.0") {
@@ -73,7 +84,7 @@ describe("fetchArtifactManifestRelease", () => {
       ),
     );
     await expect(fetchArtifactManifestRelease(PRODUCT, "")).rejects.toThrow(
-      "artifact release version is invalid",
+      "release version is invalid",
     );
 
     const oversized = Buffer.alloc(128 * 1024 + 1);
@@ -96,5 +107,91 @@ describe("fetchArtifactManifestRelease", () => {
     await expect(fetchArtifactManifestRelease(PRODUCT, "")).rejects.toThrow(
       "invalid size",
     );
+  });
+});
+
+describe("release selection", () => {
+  it("selects the highest public semantic Tauri release, not API list order", async () => {
+    const releases = [
+      {
+        tag_name: "desktop-v0.1.11",
+        draft: true,
+        assets: [],
+      },
+      {
+        tag_name: "desktop-v0.1.6",
+        body: "older",
+        assets: [
+          {
+            name: "latest.json",
+            browser_download_url: "https://downloads.test/0.1.6.json",
+          },
+        ],
+      },
+      {
+        tag_name: "desktop-v0.2.0",
+        prerelease: true,
+        assets: [],
+      },
+      {
+        tag_name: "desktop-v0.1.10",
+        body: "newer",
+        assets: [
+          {
+            name: "latest.json",
+            browser_download_url: "https://downloads.test/0.1.10.json",
+          },
+        ],
+      },
+    ];
+    const latest = {
+      version: "0.1.10",
+      notes: "newer",
+      pub_date: "2026-08-04T00:00:00.000Z",
+      platforms: {},
+    };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(releases), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(latest), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchTauriReleases(TAURI_PRODUCT, "token");
+
+    expect(result?.latest.version).toBe("0.1.10");
+    expect(result?.freshNotes.map((entry) => entry.version)).toEqual([
+      "0.1.10",
+      "0.1.6",
+    ]);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "https://downloads.test/0.1.10.json",
+      expect.any(Object),
+    );
+  });
+
+  it("selects the highest public semantic simple release", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { tag_name: "v1.9.0", assets: [] },
+            { tag_name: "v1.10.0", assets: [] },
+          ]),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    const result = await fetchSimpleReleases(
+      { ...TAURI_PRODUCT, tagPrefix: "v", tauriUpdates: false },
+      "",
+    );
+
+    expect(result?.latest.version).toBe("1.10.0");
   });
 });

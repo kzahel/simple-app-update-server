@@ -116,6 +116,30 @@ function extractVersionNotes(
     .filter((n) => n.notes.length > 0);
 }
 
+function publicSemanticReleases(
+  releases: GitHubRelease[],
+  tagPrefix: string,
+): GitHubRelease[] {
+  const matching = releases.filter(
+    (release) =>
+      !release.draft &&
+      !release.prerelease &&
+      release.tag_name.startsWith(tagPrefix),
+  );
+  for (const release of matching) {
+    const version = release.tag_name.slice(tagPrefix.length);
+    if (!isValidVersion(version)) {
+      throw new Error(`${release.tag_name}: release version is invalid`);
+    }
+  }
+  return matching.sort((a, b) =>
+    compareVersions(
+      b.tag_name.slice(tagPrefix.length),
+      a.tag_name.slice(tagPrefix.length),
+    ),
+  );
+}
+
 /** Fetch releases for a Tauri product (has latest.json asset with platform binaries). */
 export async function fetchTauriReleases(
   product: ProductConfig,
@@ -132,9 +156,7 @@ export async function fetchTauriReleases(
   }
 
   const releases = (await res.json()) as GitHubRelease[];
-  const filtered = releases.filter((r) =>
-    r.tag_name.startsWith(product.tagPrefix),
-  );
+  const filtered = publicSemanticReleases(releases, product.tagPrefix);
 
   const latestRelease = filtered[0];
   if (!latestRelease) return null;
@@ -172,9 +194,7 @@ export async function fetchSimpleReleases(
   }
 
   const releases = (await res.json()) as GitHubRelease[];
-  const filtered = releases.filter((r) =>
-    r.tag_name.startsWith(product.tagPrefix),
-  );
+  const filtered = publicSemanticReleases(releases, product.tagPrefix);
 
   const latestRelease = filtered[0];
   if (!latestRelease) return null;
@@ -212,20 +232,10 @@ export async function fetchArtifactManifestRelease(
   }
 
   const releases = (await response.json()) as GitHubRelease[];
-  const latestRelease = releases.find(
-    (release) =>
-      !release.draft &&
-      !release.prerelease &&
-      release.tag_name.startsWith(product.tagPrefix),
-  );
+  const latestRelease = publicSemanticReleases(releases, product.tagPrefix)[0];
   if (!latestRelease) return null;
 
   const version = latestRelease.tag_name.slice(product.tagPrefix.length);
-  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
-    throw new Error(
-      `${latestRelease.tag_name}: artifact release version is invalid`,
-    );
-  }
   const manifestAsset = latestRelease.assets.find(
     (asset) => asset.name === artifactManifest.manifestAsset,
   );
