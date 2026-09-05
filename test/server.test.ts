@@ -84,7 +84,20 @@ vi.mock("../src/github.js", async (importOriginal) => {
     fetchArtifactManifestRelease: vi
       .fn()
       .mockResolvedValue(MOCK_ARTIFACT_RESULT),
-    fetchTauriReleases: vi.fn().mockResolvedValue(MOCK_TAURI_RESULT),
+    fetchTauriReleases: vi
+      .fn()
+      .mockImplementation((_product, _token, channel) =>
+        Promise.resolve(
+          channel === "latest"
+            ? {
+                latest: { ...MOCK_TAURI_RESULT.latest, version: "0.2.101" },
+                freshNotes: [
+                  { version: "0.2.101", notes: "Latest-only notes" },
+                ],
+              }
+            : MOCK_TAURI_RESULT,
+        ),
+      ),
     fetchSimpleReleases: vi.fn().mockImplementation((product) => {
       if (product.tagPrefix === "bridge-v")
         return Promise.resolve(MOCK_BRIDGE_RESULT);
@@ -120,6 +133,18 @@ const MOCK_BRIDGE_RESULT: SimpleFetchResult = {
 vi.mock("../src/products.js", () => {
   const products = [
     {
+      channels: {
+        stable: {
+          displayName: "Stable",
+          tagPrefix: "v",
+          releaseKind: "release",
+        },
+        latest: {
+          displayName: "Latest",
+          tagPrefix: "latest-v",
+          releaseKind: "prerelease",
+        },
+      },
       id: "test-tauri",
       displayName: "Test Tauri App",
       hostnames: ["tauri.test"],
@@ -524,5 +549,59 @@ describe("Signed artifact manifests (Host: simple.test)", () => {
     const res = await fetch(`${baseUrl}/crostini/version`, { headers });
     expect(res.status).toBe(200);
     expect((await json(res)).version).toBe("0.1.0");
+  });
+});
+
+describe("channel HTTP compatibility", () => {
+  it("discovers supported channels and preserves legacy default", async () => {
+    const discovery = await json(await fetch(`${baseUrl}/channels`));
+    expect(discovery.schemaVersion).toBe(1);
+    expect(discovery.channels.map((c: { id: string }) => c.id)).toEqual([
+      "stable",
+      "latest",
+    ]);
+    const legacy = await json(
+      await fetch(`${baseUrl}/tauri/darwin/aarch64/0.1.0`),
+    );
+    expect(legacy.version).toBe("0.1.21");
+    const latest = await fetch(
+      `${baseUrl}/tauri/darwin/aarch64/0.1.0?channel=latest`,
+    );
+    expect(latest.headers.get("x-update-channel")).toBe("latest");
+    const body = await json(latest);
+    expect(body.version).toBe("0.2.101");
+    expect(body.channel).toBe("latest");
+    expect(body.notes).toBe("Latest-only notes");
+    const stable = await json(
+      await fetch(`${baseUrl}/tauri/darwin/aarch64/0.1.0?channel=stable`),
+    );
+    expect(stable.notes).not.toContain("Latest-only");
+  });
+  it("returns no downgrade and no candidate for unsupported artifacts", async () => {
+    expect(
+      (await fetch(`${baseUrl}/tauri/darwin/aarch64/0.2.101?channel=stable`))
+        .status,
+    ).toBe(204);
+    expect(
+      (await fetch(`${baseUrl}/tauri/darwin/unknown/0.1.0?channel=latest`))
+        .status,
+    ).toBe(204);
+  });
+  it.each([
+    "channel=",
+    "channel=beta",
+    "channel=stable&channel=latest",
+    "channel=..%2Flatest",
+  ])("rejects %s", async (query) => {
+    expect((await fetch(`${baseUrl}/version?${query}`)).status).toBe(400);
+  });
+  it("does not opt an unconfigured product into Latest", async () => {
+    expect(
+      (
+        await fetch(`${baseUrl}/version?channel=latest`, {
+          headers: { "x-forwarded-host": "simple.test" },
+        })
+      ).status,
+    ).toBe(400);
   });
 });

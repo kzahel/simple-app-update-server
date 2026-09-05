@@ -1,10 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { CHANNEL_ID, type ChannelConfig } from "./channels.js";
 import { config } from "./config.js";
 
 export interface ProductConfig {
   /** Slug used in log filenames, URL paths, display */
   id: string;
+  channels?: Record<string, ChannelConfig>;
   /** Display name for stats dashboard */
   displayName: string;
   /** Hostnames that route to this product */
@@ -24,7 +26,7 @@ export interface ProductConfig {
   };
 }
 
-function validateProduct(p: unknown, label: string): ProductConfig {
+export function validateProduct(p: unknown, label: string): ProductConfig {
   if (typeof p !== "object" || p === null) {
     throw new Error(`${label}: must be an object`);
   }
@@ -67,7 +69,41 @@ function validateProduct(p: unknown, label: string): ProductConfig {
       );
     }
   }
-  return p as ProductConfig;
+  const product = p as ProductConfig;
+  if (product.channels !== undefined) {
+    if (
+      !product.tauriUpdates ||
+      !product.channels ||
+      Array.isArray(product.channels) ||
+      typeof product.channels !== "object"
+    ) {
+      throw new Error(
+        `${label}.channels: requires a Tauri product and a channel registry`,
+      );
+    }
+    for (const [id, channel] of Object.entries(product.channels)) {
+      if (
+        !CHANNEL_ID.test(id) ||
+        !channel ||
+        typeof channel.displayName !== "string" ||
+        !channel.displayName.trim() ||
+        typeof channel.tagPrefix !== "string" ||
+        !channel.tagPrefix ||
+        !["release", "prerelease"].includes(channel.releaseKind)
+      ) {
+        throw new Error(`${label}.channels.${id}: invalid channel rule`);
+      }
+    }
+    if (
+      product.channels.stable?.releaseKind !== "release" ||
+      product.channels.stable.tagPrefix !== product.tagPrefix
+    ) {
+      throw new Error(
+        `${label}.channels.stable: must preserve legacy Stable selection`,
+      );
+    }
+  }
+  return product;
 }
 
 /** Parse a JSON file that contains either a single product object or an array of products. */

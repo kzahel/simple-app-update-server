@@ -1,6 +1,7 @@
 import * as http from "node:http";
 import { AnalyticsLogger } from "./analytics.js";
 import { Cache } from "./cache.js";
+import { channelsFor, selectChannel, stateKey } from "./channels.js";
 import { config } from "./config.js";
 import type {
   ArtifactManifestRelease,
@@ -24,6 +25,7 @@ import { compareVersions, isValidVersion } from "./version.js";
 interface TauriProductState {
   kind: "tauri";
   product: ProductConfig;
+  channel: string;
   cache: Cache<LatestJson>;
   notesStore: NotesStore;
 }
@@ -31,6 +33,7 @@ interface TauriProductState {
 interface SimpleProductState {
   kind: "simple";
   product: ProductConfig;
+  channel: string;
   cache: Cache<SimpleRelease>;
   notesStore: NotesStore;
 }
@@ -38,6 +41,7 @@ interface SimpleProductState {
 interface ArtifactManifestProductState {
   kind: "artifact-manifest";
   product: ProductConfig;
+  channel: string;
   cache: Cache<ArtifactManifestRelease>;
 }
 
@@ -50,60 +54,77 @@ const analytics = new AnalyticsLogger(config.logDir);
 const productStates = new Map<string, ProductState>();
 
 for (const product of products) {
-  const productDir = `${config.logDir}/${product.id}`;
-  const notesStore = new NotesStore(`${productDir}/notes-cache.json`);
+  for (const channel of Object.keys(channelsFor(product))) {
+    // Preserve the existing Stable disk cache; never import it into another channel.
+    const rule = channelsFor(product)[channel];
+    const namespace =
+      channel === "stable"
+        ? ""
+        : `/channels/${channel}/${encodeURIComponent(`${rule.releaseKind}-${rule.tagPrefix}`)}`;
+    const productDir = `${config.logDir}/${product.id}${namespace}`;
+    const notesStore = new NotesStore(`${productDir}/notes-cache.json`);
 
-  if (product.artifactManifest) {
-    const cache = new Cache<ArtifactManifestRelease>(
-      async () => {
-        const result = await fetchArtifactManifestRelease(
-          product,
-          config.githubToken,
-        );
-        return result?.latest ?? null;
-      },
-      config.cacheTtlMs,
-      `${productDir}/artifact-manifest-cache.json`,
-    );
-    productStates.set(product.id, {
-      kind: "artifact-manifest",
-      product,
-      cache,
-    });
-  } else if (product.tauriUpdates) {
-    const cache = new Cache<LatestJson>(
-      async () => {
-        const result = await fetchTauriReleases(product, config.githubToken);
-        if (!result) return null;
-        notesStore.merge(result.freshNotes);
-        return result.latest;
-      },
-      config.cacheTtlMs,
-      `${productDir}/latest-cache.json`,
-    );
-    productStates.set(product.id, {
-      kind: "tauri",
-      product,
-      cache,
-      notesStore,
-    });
-  } else {
-    const cache = new Cache<SimpleRelease>(
-      async () => {
-        const result = await fetchSimpleReleases(product, config.githubToken);
-        if (!result) return null;
-        notesStore.merge(result.freshNotes);
-        return result.latest;
-      },
-      config.cacheTtlMs,
-      `${productDir}/latest-cache.json`,
-    );
-    productStates.set(product.id, {
-      kind: "simple",
-      product,
-      cache,
-      notesStore,
-    });
+    if (product.artifactManifest) {
+      const cache = new Cache<ArtifactManifestRelease>(
+        async () => {
+          const result = await fetchArtifactManifestRelease(
+            product,
+            config.githubToken,
+          );
+          return result?.latest ?? null;
+        },
+        config.cacheTtlMs,
+        `${productDir}/artifact-manifest-cache.json`,
+      );
+      productStates.set(stateKey(product, channel), {
+        kind: "artifact-manifest",
+        product,
+        channel,
+        cache,
+      });
+    } else if (product.tauriUpdates) {
+      const cache = new Cache<LatestJson>(
+        async () => {
+          const result = await fetchTauriReleases(
+            product,
+            config.githubToken,
+            channel,
+          );
+          if (!result) return null;
+          notesStore.merge(result.freshNotes);
+          return result.latest;
+        },
+        config.cacheTtlMs,
+        `${productDir}/latest-cache.json`,
+        (next, previous) =>
+          compareVersions(next.version, previous.version) >= 0,
+      );
+      productStates.set(stateKey(product, channel), {
+        kind: "tauri",
+        product,
+        channel,
+        cache,
+        notesStore,
+      });
+    } else {
+      const cache = new Cache<SimpleRelease>(
+        async () => {
+          const result = await fetchSimpleReleases(product, config.githubToken);
+          if (!result) return null;
+          notesStore.merge(result.freshNotes);
+          return result.latest;
+        },
+        config.cacheTtlMs,
+        `${productDir}/latest-cache.json`,
+      );
+      productStates.set(stateKey(product, channel), {
+        kind: "simple",
+        product,
+        channel,
+        cache,
+        notesStore,
+      });
+    }
   }
 }
 
@@ -156,7 +177,12 @@ async function handleTauriUpdateCheck(
     return;
   }
 
-  const notes = aggregateNotes(state.notesStore.getAll(), currentVersion);
+  const notes = aggregateNotes(
+    state.notesStore
+      .getAll()
+      .filter((n) => compareVersions(n.version, latest.version) <= 0),
+    currentVersion,
+  );
   const platform = findPlatformUpdate(latest, target, arch, notes);
   const updateAvailable =
     !!platform && compareVersions(latest.version, currentVersion) > 0;
@@ -164,6 +190,7 @@ async function handleTauriUpdateCheck(
   analytics.log({
     ts: new Date().toISOString(),
     product: state.product.id,
+    channel: state.channel,
     ip: getClientIp(req),
     target,
     arch,
@@ -181,7 +208,7 @@ async function handleTauriUpdateCheck(
     return;
   }
 
-  sendJson(res, 200, platform);
+  sendJson(res, 200, { ...platform, channel: state.channel });
 }
 
 async function handleVersionCheck(
@@ -202,6 +229,7 @@ async function handleVersionCheck(
     analytics.log({
       ts: new Date().toISOString(),
       product: state.product.id,
+      channel: state.channel,
       ip: getClientIp(req),
       target: "",
       arch: "",
@@ -247,6 +275,7 @@ async function handleArtifactManifestCheck(
     analytics.log({
       ts: new Date().toISOString(),
       product: state.product.id,
+      channel: state.channel,
       ip: getClientIp(req),
       target: "crostini",
       arch: arch ?? "",
@@ -280,7 +309,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const { pathname } = new URL(req.url || "/", "http://localhost");
+  const { pathname, searchParams } = new URL(
+    req.url || "/",
+    "http://localhost",
+  );
   const segments = pathname.split("/").filter(Boolean);
 
   // GET /health — global, no product needed
@@ -298,7 +330,27 @@ const server = http.createServer(async (req, res) => {
   const { product, remainingPath } = resolved;
   const routeSegments = remainingPath.split("/").filter(Boolean);
 
-  const state = productStates.get(product.id);
+  if (remainingPath === "/channels") {
+    res.setHeader("Cache-Control", "no-store");
+    sendJson(res, 200, {
+      schemaVersion: 1,
+      channels: Object.entries(channelsFor(product)).map(([id, rule]) => ({
+        id,
+        displayName: rule.displayName,
+      })),
+    });
+    return;
+  }
+  let channel: string;
+  try {
+    channel = selectChannel(product, searchParams);
+  } catch (error) {
+    sendJson(res, 400, { error: String(error) });
+    return;
+  }
+  res.setHeader("X-Update-Channel", channel);
+  res.setHeader("Cache-Control", "no-store");
+  const state = productStates.get(stateKey(product, channel));
   if (!state) {
     sendJson(res, 500, { error: "Product state not initialized" });
     return;
@@ -392,7 +444,7 @@ self.addEventListener('fetch', e => {
         currentVersion,
       );
     } catch (err) {
-      console.error("Update check error:", err);
+      console.error(`Update check error ${product.id}/${channel}:`, err);
       sendJson(res, 500, { error: "Internal server error" });
     }
     return;

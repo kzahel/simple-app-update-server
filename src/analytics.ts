@@ -4,6 +4,7 @@ import * as path from "node:path";
 export interface UpdateCheckEvent {
   ts: string;
   product: string;
+  channel?: string;
   ip: string;
   target: string;
   arch: string;

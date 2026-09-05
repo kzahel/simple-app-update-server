@@ -10,6 +10,7 @@ export class Cache<T> {
     private fetchFn: () => Promise<T | null>,
     private ttlMs: number,
     private diskPath?: string,
+    private accept: (next: T, previous: T) => boolean = () => true,
   ) {
     if (diskPath) {
       try {
@@ -31,16 +32,16 @@ export class Cache<T> {
     if (!this.inflight) {
       this.inflight = this.fetchFn()
         .then((result) => {
-          if (result) {
+          if (result && (!this.data || this.accept(result, this.data))) {
             this.data = result;
             this.fetchedAt = Date.now();
             this.writeToDisk(result);
           }
           this.inflight = null;
-          return result ?? this.data;
+          return this.data;
         })
         .catch((err) => {
-          console.error("Cache fetch error:", err);
+          console.error(`Cache fetch error ${this.diskPath ?? "memory"}:`, err);
           this.inflight = null;
           return this.data; // Return stale data on error
         });
@@ -56,7 +57,8 @@ export class Cache<T> {
     if (!this.diskPath) return;
     try {
       fs.mkdirSync(path.dirname(this.diskPath), { recursive: true });
-      fs.writeFileSync(this.diskPath, JSON.stringify(data));
+      fs.writeFileSync(`${this.diskPath}.tmp`, JSON.stringify(data));
+      fs.renameSync(`${this.diskPath}.tmp`, this.diskPath);
     } catch (err) {
       console.error("Cache disk write error:", err);
     }

@@ -1,3 +1,4 @@
+import { channelsFor } from "./channels.js";
 import type { ProductConfig } from "./products.js";
 import { compareVersions, isValidVersion } from "./version.js";
 
@@ -119,11 +120,14 @@ function extractVersionNotes(
 function publicSemanticReleases(
   releases: GitHubRelease[],
   tagPrefix: string,
+  releaseKind: "release" | "prerelease" = "release",
 ): GitHubRelease[] {
   const matching = releases.filter(
     (release) =>
       !release.draft &&
-      !release.prerelease &&
+      (releaseKind === "prerelease"
+        ? release.prerelease === true
+        : !release.prerelease) &&
       release.tag_name.startsWith(tagPrefix),
   );
   for (const release of matching) {
@@ -140,23 +144,45 @@ function publicSemanticReleases(
   );
 }
 
+/** Walk every page so frequent previews cannot hide a product's Stable release. */
+async function listReleases(
+  product: ProductConfig,
+  githubToken: string,
+): Promise<GitHubRelease[]> {
+  const releases: GitHubRelease[] = [];
+  for (let page = 1; page <= 100; page++) {
+    const response = await fetch(
+      `https://api.github.com/repos/${product.githubRepo}/releases?per_page=100${page === 1 ? "" : `&page=${page}`}`,
+      {
+        headers: makeHeaders(product, githubToken),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!response.ok)
+      throw new Error(
+        `GitHub API returned ${response.status}: ${response.statusText}`,
+      );
+    const batch = (await response.json()) as GitHubRelease[];
+    releases.push(...batch);
+    if (batch.length < 100) return releases;
+  }
+  throw new Error(`${product.id}: release pagination limit exceeded`);
+}
+
 /** Fetch releases for a Tauri product (has latest.json asset with platform binaries). */
 export async function fetchTauriReleases(
   product: ProductConfig,
   githubToken: string,
+  channel = "stable",
 ): Promise<TauriFetchResult | null> {
-  const headers = makeHeaders(product, githubToken);
-
-  const res = await fetch(
-    `https://api.github.com/repos/${product.githubRepo}/releases?per_page=100`,
-    { headers },
+  const releases = await listReleases(product, githubToken);
+  const rule = channelsFor(product)[channel];
+  if (!rule) throw new Error(`Unsupported channel ${product.id}/${channel}`);
+  const filtered = publicSemanticReleases(
+    releases,
+    rule.tagPrefix,
+    rule.releaseKind,
   );
-  if (!res.ok) {
-    throw new Error(`GitHub API returned ${res.status}: ${res.statusText}`);
-  }
-
-  const releases = (await res.json()) as GitHubRelease[];
-  const filtered = publicSemanticReleases(releases, product.tagPrefix);
 
   const latestRelease = filtered[0];
   if (!latestRelease) return null;
@@ -167,13 +193,21 @@ export async function fetchTauriReleases(
   const jsonRes = await fetch(asset.browser_download_url, {
     headers: { "User-Agent": `${product.id}-update-server` },
     redirect: "follow",
+    signal: AbortSignal.timeout(15_000),
   });
   if (!jsonRes.ok) {
     throw new Error(`Failed to fetch latest.json: ${jsonRes.status}`);
   }
 
   const latest = (await jsonRes.json()) as LatestJson;
-  const freshNotes = extractVersionNotes(filtered, product.tagPrefix);
+  if (
+    latest.version !== latestRelease.tag_name.slice(rule.tagPrefix.length) ||
+    !isValidVersion(latest.version) ||
+    !latest.platforms
+  ) {
+    throw new Error(`${product.id}/${channel}: latest.json identity mismatch`);
+  }
+  const freshNotes = extractVersionNotes(filtered, rule.tagPrefix);
 
   return { latest, freshNotes };
 }

@@ -121,3 +121,33 @@ updates.my-app.com {
 ```
 
 Caddy will automatically provision TLS certificates via Let's Encrypt. Update check endpoints (`/tauri/*`, `/version/*`) remain unauthenticated so apps can check freely, while `/stats` requires a login.
+
+### Selectable update channels
+
+Tauri products may opt into a channel registry:
+
+```json
+"channels": {
+  "stable": {"displayName":"Stable","tagPrefix":"desktop-v","releaseKind":"release"},
+  "latest": {"displayName":"Latest","tagPrefix":"desktop-latest-v","releaseKind":"prerelease"}
+}
+```
+
+`GET <product>/channels` advertises schema version 1 and configured IDs/display
+names. Update and version routes accept one `?channel=<id>`; omission preserves
+Stable. Explicit empty, duplicate, malformed or unsupported channels return
+400. Responses identify the channel with `X-Update-Channel`; Tauri candidates
+also carry `channel` in JSON. Drafts are always excluded, and a channel selects
+only its exact tag prefix and release kind. Numeric version ordering, rather
+than publication time, determines the candidate. Tauri tag/metadata version
+mismatches fail closed. Pagination preserves access to Stable after frequent
+preview publication. New channel clients must discover support before using
+Latest against independently deployed servers.
+
+Stable retains its existing cache/notes files. Additional channels use separate
+`channels/<id>/<encoded-release-rule>/` directories; they never inherit Stable
+fallback. Removing a channel makes its explicit requests unavailable. Each
+channel retains its last successful candidate across transient GitHub failures
+and rejects regressing candidate versions. Analytics include channel identity.
+The canary contract is maintained in desktop-release-kit's
+`contract/desktop-update-channels-v1.md`.
