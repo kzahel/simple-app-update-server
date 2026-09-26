@@ -26,6 +26,7 @@ Products are routed by hostname, so a single instance serves multiple apps. Prod
 | `GET /version/:currentVersion` | Version check with analytics (204 or update JSON) |
 | `GET /manifest[/:currentVersion]` | Latest signed artifact-manifest envelope |
 | `GET /manifest/:arch/:currentVersion` | Architecture-aware manifest check with analytics |
+| `GET, HEAD /download/:platform` | Optional Stable installer redirect (302 to GitHub release asset) |
 | `GET /stats` | Per-product analytics dashboard |
 
 ## Configuration
@@ -70,6 +71,7 @@ Each product has these fields:
 | `tauriUpdates` | boolean | Whether this product serves Tauri updater responses (`/tauri` endpoint) |
 | `pathPrefix` | string? | Optional path prefix for products sharing a hostname (e.g. `"/bridge"`) |
 | `artifactManifest` | object? | Exact `manifestAsset` and `signatureAsset` names for signed native releases |
+| `downloads` | object? | Tauri Stable installer asset-name patterns keyed by platform ID |
 
 Products sharing a hostname are differentiated by `pathPrefix`. Requests to `/bridge/version` route to the product with `pathPrefix: "/bridge"`, while `/version` routes to the one without a prefix.
 
@@ -151,3 +153,28 @@ channel retains its last successful candidate across transient GitHub failures
 and rejects regressing candidate versions. Analytics include channel identity.
 The canary contract is maintained in desktop-release-kit's
 `contract/desktop-update-channels-v1.md`.
+
+### Stable installer downloads
+
+Tauri products may expose installer redirects with an optional `downloads` map:
+
+```json
+"downloads": {
+  "macos-arm64": { "asset": "App_*_aarch64.dmg" },
+  "windows-x64": { "asset": "App_*_x64-setup.exe" }
+}
+```
+
+Platform IDs are configured by each product; asset patterns match release
+asset names, with `*` as the wildcard. `GET` and `HEAD` under the product path
+prefix (for example `/desktop/download/macos-arm64`) return `302` with a
+`Location` pointing at the matching asset's GitHub release URL and a five-minute
+public cache lifetime. GitHub serves the installer bytes and filename. The
+server selects only the Stable channel, regardless of query parameters, and
+does not record download analytics.
+
+Unknown platforms, missing assets, and patterns matching multiple assets
+return JSON `404`; ambiguous matches are also logged. Missing release metadata,
+including old disk caches that lack asset details until the first successful
+refresh, returns JSON `503`. Existing updater routes and cache fallback remain
+unchanged.

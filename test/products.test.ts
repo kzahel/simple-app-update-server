@@ -62,3 +62,37 @@ describe("channel registry validation", () => {
     ).toThrow();
   });
 });
+
+describe("installer download configuration", () => {
+  it("accepts platform ids with asset-name patterns", () => {
+    const downloads = { "macos-arm64": { asset: "App_*_aarch64.dmg" } };
+    expect(
+      validateProduct({ ...product, downloads }, "fixture").downloads,
+    ).toEqual(downloads);
+  });
+
+  it("rejects invalid or non-Tauri download configuration", () => {
+    for (const downloads of [
+      null,
+      {},
+      [],
+      { "Mac OS": { asset: "App_*.dmg" } },
+      { macos: { asset: "" } },
+      { macos: { asset: "../App_*.dmg" } },
+    ]) {
+      expect(() =>
+        validateProduct({ ...product, downloads }, "fixture"),
+      ).toThrow();
+    }
+    expect(() =>
+      validateProduct(
+        {
+          ...product,
+          tauriUpdates: false,
+          downloads: { macos: { asset: "App_*.dmg" } },
+        },
+        "fixture",
+      ),
+    ).toThrow();
+  });
+});

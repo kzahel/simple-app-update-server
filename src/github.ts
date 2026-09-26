@@ -9,6 +9,12 @@ export interface LatestJson {
   platforms: Record<string, { signature: string; url: string }>;
 }
 
+/** Stable release details retained with Tauri metadata for installer links. */
+export interface CachedTauriRelease extends LatestJson {
+  releaseTag?: string;
+  releaseAssets?: Array<{ name: string; browser_download_url: string }>;
+}
+
 export interface SimpleRelease {
   version: string;
   notes: string;
@@ -38,7 +44,7 @@ export interface VersionNotes {
 }
 
 export interface TauriFetchResult {
-  latest: LatestJson;
+  latest: CachedTauriRelease;
   freshNotes: VersionNotes[];
 }
 
@@ -209,7 +215,17 @@ export async function fetchTauriReleases(
   }
   const freshNotes = extractVersionNotes(filtered, rule.tagPrefix);
 
-  return { latest, freshNotes };
+  return {
+    latest: {
+      ...latest,
+      releaseTag: latestRelease.tag_name,
+      releaseAssets: latestRelease.assets.map((asset) => ({
+        name: asset.name,
+        browser_download_url: asset.browser_download_url,
+      })),
+    },
+    freshNotes,
+  };
 }
 
 /** Fetch releases for a non-Tauri product (just version + notes from tags). */

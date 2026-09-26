@@ -25,6 +25,24 @@ const MOCK_TAURI_RESULT: TauriFetchResult = {
     version: "0.1.21",
     notes: "- Remember window position across restarts",
     pub_date: "2026-02-11T07:33:31.665Z",
+    releaseTag: "v0.1.21",
+    releaseAssets: [
+      {
+        name: "App_0.1.21_aarch64.dmg",
+        browser_download_url:
+          "https://github.com/test/tauri/releases/download/v0.1.21/App_0.1.21_aarch64.dmg",
+      },
+      {
+        name: "App_0.1.21_x64.dmg",
+        browser_download_url:
+          "https://github.com/test/tauri/releases/download/v0.1.21/App_0.1.21_x64.dmg",
+      },
+      {
+        name: "App_0.1.21_x64-setup.exe",
+        browser_download_url:
+          "https://github.com/test/tauri/releases/download/v0.1.21/App_0.1.21_x64-setup.exe",
+      },
+    ],
     platforms: {
       "darwin-aarch64": {
         signature: "sig-darwin-aarch64",
@@ -151,6 +169,34 @@ vi.mock("../src/products.js", () => {
       githubRepo: "test/tauri",
       tagPrefix: "v",
       tauriUpdates: true,
+    },
+    {
+      id: "test-tauri-downloads",
+      displayName: "Test Tauri Downloads",
+      hostnames: ["tauri.test"],
+      githubRepo: "test/tauri",
+      tagPrefix: "v",
+      tauriUpdates: true,
+      pathPrefix: "/desktop",
+      channels: {
+        stable: {
+          displayName: "Stable",
+          tagPrefix: "v",
+          releaseKind: "release",
+        },
+        latest: {
+          displayName: "Latest",
+          tagPrefix: "latest-v",
+          releaseKind: "prerelease",
+        },
+      },
+      downloads: {
+        "macos-arm64": { asset: "App_*_aarch64.dmg" },
+        "macos-x64": { asset: "App_*_x64.dmg" },
+        "windows-x64": { asset: "App_*_x64-setup.exe" },
+        ambiguous: { asset: "App_*.dmg" },
+        missing: { asset: "App_*.msi" },
+      },
     },
     {
       id: "test-simple",
@@ -549,6 +595,70 @@ describe("Signed artifact manifests (Host: simple.test)", () => {
     const res = await fetch(`${baseUrl}/crostini/version`, { headers });
     expect(res.status).toBe(200);
     expect((await json(res)).version).toBe("0.1.0");
+  });
+});
+
+describe("Stable installer redirects", () => {
+  const headers = { "X-Forwarded-Host": "tauri.test" };
+  const url = (platform: string) => `${baseUrl}/desktop/download/${platform}`;
+
+  it("redirects each configured installer without proxying its bytes", async () => {
+    for (const [platform, asset] of [
+      ["macos-arm64", "App_0.1.21_aarch64.dmg"],
+      ["macos-x64", "App_0.1.21_x64.dmg"],
+      ["windows-x64", "App_0.1.21_x64-setup.exe"],
+    ]) {
+      const res = await fetch(url(platform), { headers, redirect: "manual" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe(
+        `https://github.com/test/tauri/releases/download/v0.1.21/${asset}`,
+      );
+      expect(res.headers.get("cache-control")).toBe("public, max-age=300");
+      expect(await res.text()).toBe("");
+    }
+  });
+
+  it("uses Stable even when a caller asks for Latest and supports HEAD", async () => {
+    const res = await fetch(`${url("macos-arm64")}?channel=latest`, {
+      method: "HEAD",
+      headers,
+      redirect: "manual",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("/v0.1.21/");
+    expect(await res.text()).toBe("");
+    expect(
+      (await fetch(`${baseUrl}/desktop/version`, { method: "HEAD", headers }))
+        .status,
+    ).toBe(405);
+  });
+
+  it("distinguishes unknown, missing and ambiguous installers", async () => {
+    expect((await fetch(url("unknown"), { headers })).status).toBe(404);
+    expect((await fetch(url("missing"), { headers })).status).toBe(404);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await fetch(url("ambiguous"), { headers })).status).toBe(404);
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining("asset pattern matched 2 assets"),
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("returns 503 for an old cache without release assets", async () => {
+    const github = await import("../src/github.js");
+    vi.mocked(github.fetchTauriReleases).mockResolvedValueOnce({
+      latest: {
+        version: MOCK_TAURI_RESULT.latest.version,
+        notes: MOCK_TAURI_RESULT.latest.notes,
+        pub_date: MOCK_TAURI_RESULT.latest.pub_date,
+        platforms: MOCK_TAURI_RESULT.latest.platforms,
+      },
+      freshNotes: [],
+    });
+    expect((await fetch(url("macos-arm64"), { headers })).status).toBe(503);
   });
 });
 

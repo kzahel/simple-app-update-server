@@ -5,7 +5,7 @@ import { channelsFor, selectChannel, stateKey } from "./channels.js";
 import { config } from "./config.js";
 import type {
   ArtifactManifestRelease,
-  LatestJson,
+  CachedTauriRelease,
   SimpleRelease,
 } from "./github.js";
 import {
@@ -26,7 +26,7 @@ interface TauriProductState {
   kind: "tauri";
   product: ProductConfig;
   channel: string;
-  cache: Cache<LatestJson>;
+  cache: Cache<CachedTauriRelease>;
   notesStore: NotesStore;
 }
 
@@ -52,6 +52,14 @@ type ProductState =
 
 const analytics = new AnalyticsLogger(config.logDir);
 const productStates = new Map<string, ProductState>();
+
+function matchesAssetPattern(name: string, pattern: string): boolean {
+  const escaped = pattern
+    .split("*")
+    .map((part) => part.replace(/[^a-zA-Z0-9_-]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`).test(name);
+}
 
 for (const product of products) {
   for (const channel of Object.keys(channelsFor(product))) {
@@ -83,7 +91,7 @@ for (const product of products) {
         cache,
       });
     } else if (product.tauriUpdates) {
-      const cache = new Cache<LatestJson>(
+      const cache = new Cache<CachedTauriRelease>(
         async () => {
           const result = await fetchTauriReleases(
             product,
@@ -303,7 +311,7 @@ async function handleArtifactManifestCheck(
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.method !== "GET") {
+  if (req.method !== "GET" && req.method !== "HEAD") {
     res.writeHead(405);
     res.end();
     return;
@@ -317,6 +325,11 @@ const server = http.createServer(async (req, res) => {
 
   // GET /health — global, no product needed
   if (segments[0] === "health") {
+    if (req.method !== "GET") {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -329,6 +342,86 @@ const server = http.createServer(async (req, res) => {
   }
   const { product, remainingPath } = resolved;
   const routeSegments = remainingPath.split("/").filter(Boolean);
+
+  if (req.method === "HEAD" && routeSegments[0] !== "download") {
+    res.writeHead(405);
+    res.end();
+    return;
+  }
+
+  if (routeSegments[0] === "download") {
+    const platform = routeSegments[1];
+    const rule =
+      routeSegments.length === 2 && platform
+        ? product.downloads?.[platform]
+        : undefined;
+    res.setHeader("Cache-Control", "no-store");
+    if (
+      !platform ||
+      !product.downloads ||
+      !Object.hasOwn(product.downloads, platform) ||
+      !rule
+    ) {
+      sendJson(res, 404, { error: "Unknown download platform" });
+      return;
+    }
+    const state = productStates.get(stateKey(product, "stable"));
+    if (!state || state.kind !== "tauri") {
+      sendJson(res, 503, { error: "Stable download unavailable" });
+      return;
+    }
+    const latest = await state.cache.get();
+    if (
+      !latest?.releaseTag ||
+      !latest.releaseAssets ||
+      latest.releaseTag !==
+        channelsFor(product).stable.tagPrefix + latest.version
+    ) {
+      sendJson(res, 503, { error: "Stable download unavailable" });
+      return;
+    }
+    const matches = latest.releaseAssets.filter((asset) =>
+      matchesAssetPattern(asset.name, rule.asset),
+    );
+    if (matches.length !== 1) {
+      if (matches.length > 1) {
+        console.error(
+          `${product.id}/${platform}: asset pattern matched ${matches.length} assets`,
+        );
+      }
+      sendJson(res, 404, { error: "Installer not found in Stable release" });
+      return;
+    }
+    const asset = matches[0];
+    const expectedPath = `/${product.githubRepo}/releases/download/${latest.releaseTag}/`;
+    let assetUrl: URL;
+    let assetName: string;
+    try {
+      assetUrl = new URL(asset.browser_download_url);
+      assetName = decodeURIComponent(
+        assetUrl.pathname.slice(expectedPath.length),
+      );
+    } catch {
+      sendJson(res, 503, { error: "Invalid release asset URL" });
+      return;
+    }
+    if (
+      assetUrl.origin !== "https://github.com" ||
+      !assetUrl.pathname.startsWith(expectedPath) ||
+      assetName !== asset.name ||
+      assetUrl.search ||
+      assetUrl.hash
+    ) {
+      sendJson(res, 503, { error: "Invalid release asset URL" });
+      return;
+    }
+    res.writeHead(302, {
+      Location: asset.browser_download_url,
+      "Cache-Control": "public, max-age=300",
+    });
+    res.end();
+    return;
+  }
 
   if (remainingPath === "/channels") {
     res.setHeader("Cache-Control", "no-store");

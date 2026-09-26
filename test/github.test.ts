@@ -141,6 +141,11 @@ describe("release selection", () => {
             name: "latest.json",
             browser_download_url: "https://downloads.test/0.1.10.json",
           },
+          {
+            name: "App_0.1.10_aarch64.dmg",
+            browser_download_url:
+              "https://github.com/owner/repository/releases/download/desktop-v0.1.10/App_0.1.10_aarch64.dmg",
+          },
         ],
       },
     ];
@@ -163,6 +168,11 @@ describe("release selection", () => {
     const result = await fetchTauriReleases(TAURI_PRODUCT, "token");
 
     expect(result?.latest.version).toBe("0.1.10");
+    expect(result?.latest.releaseTag).toBe("desktop-v0.1.10");
+    expect(result?.latest.releaseAssets?.map((asset) => asset.name)).toEqual([
+      "latest.json",
+      "App_0.1.10_aarch64.dmg",
+    ]);
     expect(result?.freshNotes.map((entry) => entry.version)).toEqual([
       "0.1.10",
       "0.1.6",

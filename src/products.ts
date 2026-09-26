@@ -24,6 +24,8 @@ export interface ProductConfig {
     manifestAsset: string;
     signatureAsset: string;
   };
+  /** Optional stable installer asset patterns, keyed by public platform id. */
+  downloads?: Record<string, { asset: string }>;
 }
 
 export function validateProduct(p: unknown, label: string): ProductConfig {
@@ -67,6 +69,35 @@ export function validateProduct(p: unknown, label: string): ProductConfig {
       throw new Error(
         `${label}: artifactManifest and tauriUpdates cannot both be enabled`,
       );
+    }
+  }
+  const downloads = (p as Record<string, unknown>).downloads;
+  if (downloads !== undefined) {
+    if (
+      (p as Record<string, unknown>).tauriUpdates !== true ||
+      !downloads ||
+      typeof downloads !== "object" ||
+      Array.isArray(downloads) ||
+      Object.keys(downloads).length === 0
+    ) {
+      throw new Error(
+        `${label}.downloads: requires a Tauri product and platform patterns`,
+      );
+    }
+    for (const [platform, rule] of Object.entries(downloads)) {
+      if (
+        !CHANNEL_ID.test(platform) ||
+        !rule ||
+        typeof rule !== "object" ||
+        Array.isArray(rule) ||
+        typeof (rule as Record<string, unknown>).asset !== "string" ||
+        !(rule as { asset: string }).asset ||
+        /[/\\]/.test((rule as { asset: string }).asset)
+      ) {
+        throw new Error(
+          `${label}.downloads.${platform}: invalid asset pattern`,
+        );
+      }
     }
   }
   const product = p as ProductConfig;
