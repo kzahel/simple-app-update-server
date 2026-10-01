@@ -1,3 +1,4 @@
+import { createReadStream } from "node:fs";
 import * as http from "node:http";
 import { AnalyticsLogger } from "./analytics.js";
 import { Cache } from "./cache.js";
@@ -19,6 +20,12 @@ import { NotesStore } from "./notes-store.js";
 import type { ProductConfig } from "./products.js";
 import { findProduct, productById, products } from "./products.js";
 import { generateStatsHtml } from "./stats.js";
+import {
+  findTrialAsset,
+  loadTrialAssets,
+  type TrialAsset,
+} from "./trial-assets.js";
+import { loadTrialUpdates, selectTrialUpdate } from "./trial-updates.js";
 import { compareVersions, isValidVersion } from "./version.js";
 
 // Per-product state
@@ -49,6 +56,30 @@ type ProductState =
   | TauriProductState
   | SimpleProductState
   | ArtifactManifestProductState;
+
+let trialUpdates = loadTrialUpdates(config.trialUpdatesConfig);
+if (
+  trialUpdates &&
+  !products.some(
+    (product) =>
+      product.tauriUpdates &&
+      product.id === trialUpdates?.productId &&
+      Object.hasOwn(channelsFor(product), trialUpdates.channel),
+  )
+) {
+  console.error("Trial updates disabled: unknown Tauri product/channel");
+  trialUpdates = undefined;
+}
+
+let trialAssets: TrialAsset[] = [];
+try {
+  trialAssets = loadTrialAssets(trialUpdates, config.trialAssetsDirectory);
+} catch {
+  console.error(
+    "Trial updates disabled: pinned local assets unavailable or changed",
+  );
+  trialUpdates = undefined;
+}
 
 const analytics = new AnalyticsLogger(config.logDir);
 const productStates = new Map<string, ProductState>();
@@ -179,18 +210,26 @@ async function handleTauriUpdateCheck(
   arch: string,
   currentVersion: string,
 ): Promise<void> {
-  const latest = await state.cache.get();
+  const trial = selectTrialUpdate(
+    trialUpdates,
+    state.product.id,
+    state.channel,
+    req.headers["x-cfu-id"],
+  );
+  const latest = trial ?? (await state.cache.get());
   if (!latest) {
     sendJson(res, 500, { error: "Unable to fetch release info" });
     return;
   }
 
-  const notes = aggregateNotes(
-    state.notesStore
-      .getAll()
-      .filter((n) => compareVersions(n.version, latest.version) <= 0),
-    currentVersion,
-  );
+  const notes = trial
+    ? trial.notes
+    : aggregateNotes(
+        state.notesStore
+          .getAll()
+          .filter((n) => compareVersions(n.version, latest.version) <= 0),
+        currentVersion,
+      );
   const platform = findPlatformUpdate(latest, target, arch, notes);
   const updateAvailable =
     !!platform && compareVersions(latest.version, currentVersion) > 0;
@@ -331,6 +370,28 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  // Trial URLs are immutable exact matches, never a directory/file browse API.
+  const forwardedHost = req.headers["x-forwarded-host"];
+  const assetHost =
+    typeof forwardedHost === "string" ? forwardedHost : req.headers.host || "";
+  const trialAsset = findTrialAsset(trialAssets, assetHost, req.url || "/");
+  if (trialAsset) {
+    res.writeHead(200, {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": trialAsset.size,
+      "Cache-Control": "no-store",
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    const stream = createReadStream(trialAsset.file);
+    stream.on("error", () => res.destroy());
+    res.on("close", () => stream.destroy());
+    stream.pipe(res);
     return;
   }
 

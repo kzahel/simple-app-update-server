@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import type * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import {
@@ -14,6 +16,7 @@ import type {
   SimpleFetchResult,
   TauriFetchResult,
 } from "../src/github.js";
+import { ID, trialFixture } from "./trial-fixture.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: test helper for JSON responses
 async function json(res: Response): Promise<any> {
@@ -129,6 +132,8 @@ const testDir = `/tmp/update-server-test-${Date.now()}`;
 // Mock config
 vi.mock("../src/config.js", () => ({
   config: {
+    trialAssetsDirectory: `${testDir}/assets`,
+    trialUpdatesConfig: `${testDir}/trial.json`,
     port: 0,
     cacheTtlMs: 60_000,
     logDir: testDir,
@@ -276,6 +281,15 @@ let server: http.Server;
 let baseUrl: string;
 
 beforeAll(async () => {
+  mkdirSync(testDir, { recursive: true });
+  const fixture = trialFixture();
+  const bytes = Buffer.alloc(42, 7);
+  fixture.candidate.platforms["linux-x86_64"].sha256 = createHash("sha256")
+    .update(bytes)
+    .digest("hex");
+  mkdirSync(`${testDir}/assets`);
+  writeFileSync(`${testDir}/assets/trial.AppImage`, bytes);
+  writeFileSync(`${testDir}/trial.json`, JSON.stringify(fixture));
   const mod = await import("../src/server.js");
   server = mod.server;
   await new Promise<void>((resolve) => {
@@ -297,6 +311,7 @@ afterAll(async () => {
   const mod = await import("../src/server.js");
   mod.analytics.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  rmSync(testDir, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
@@ -713,5 +728,126 @@ describe("channel HTTP compatibility", () => {
         })
       ).status,
     ).toBe(400);
+  });
+});
+
+describe("opt-in pinned trial at the unchanged updater URL", () => {
+  const route = "/tauri/linux/x86_64/0.2.1";
+  it("serves the candidate without fetching or contaminating ordinary release caches", async () => {
+    const { fetchTauriReleases } = await import("../src/github.js");
+    vi.mocked(fetchTauriReleases).mockClear();
+    const trial = await fetch(baseUrl + route, {
+      headers: { "X-Forwarded-Host": "tauri.test", "X-CFU-Id": ID },
+    });
+    expect(trial.status).toBe(200);
+    expect(trial.headers.get("cache-control")).toBe("no-store");
+    expect(trial.headers.get("x-update-channel")).toBe("stable");
+    const result = await json(trial);
+    expect(result.version).toBe("0.3.0");
+    expect(result.channel).toBe("stable");
+    expect(result.signature).toBe(
+      trialFixture().candidate.platforms["linux-x86_64"].signature,
+    );
+    expect(fetchTauriReleases).not.toHaveBeenCalled();
+    const ordinary = await fetch(baseUrl + route, {
+      headers: { "X-Forwarded-Host": "tauri.test" },
+    });
+    expect(ordinary.status).toBe(204); // Ordinary release remains 0.1.21.
+    expect(fetchTauriReleases).toHaveBeenCalledTimes(1);
+    const oldOrdinary = await fetch(`${baseUrl}/tauri/linux/x86_64/0.1.0`, {
+      headers: { "X-Forwarded-Host": "tauri.test" },
+    });
+    expect((await json(oldOrdinary)).version).toBe("0.1.21");
+  });
+  it("does not select by IP, query parameter, missing, malformed or unknown IDs", async () => {
+    for (const id of [
+      "",
+      "unknown",
+      `${ID}, ${ID}`,
+      "00000000-0000-0000-0000-000000000000",
+    ]) {
+      const response = await fetch(`${baseUrl + route}?installationId=${ID}`, {
+        headers: {
+          "X-Forwarded-Host": "tauri.test",
+          "X-CFU-Id": id,
+          "X-Forwarded-For": "127.0.0.1",
+        },
+      });
+      expect(response.status).toBe(204);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+  });
+  it("does not downgrade or offer an unsupported trial target", async () => {
+    for (const path of [
+      "/tauri/linux/x86_64/0.3.0",
+      "/tauri/linux/x86_64/0.4.0",
+      "/tauri/darwin/aarch64/0.2.1",
+    ]) {
+      const response = await fetch(baseUrl + path, {
+        headers: { "X-Forwarded-Host": "tauri.test", "X-CFU-Id": ID },
+      });
+      expect(response.status).toBe(204);
+    }
+  });
+  it("preserves other products, channels, discovery and installer routing", async () => {
+    const latest = await fetch(
+      `${baseUrl}/tauri/linux/x86_64/0.1.0?channel=latest`,
+      { headers: { "X-Forwarded-Host": "tauri.test", "X-CFU-Id": ID } },
+    );
+    expect((await json(latest)).version).toBe("0.2.101");
+    const other = await fetch(`${baseUrl}/desktop/tauri/linux/x86_64/0.1.0`, {
+      headers: { "X-Forwarded-Host": "tauri.test", "X-CFU-Id": ID },
+    });
+    expect((await json(other)).version).toBe("0.1.21");
+    const discovery = await fetch(`${baseUrl}/channels`, {
+      headers: { "X-Forwarded-Host": "tauri.test", "X-CFU-Id": ID },
+    });
+    expect(
+      (await json(discovery)).channels.map((c: { id: string }) => c.id),
+    ).toEqual(["stable", "latest"]);
+    const download = await fetch(`${baseUrl}/desktop/download/windows-x64`, {
+      headers: { "X-Forwarded-Host": "tauri.test", "X-CFU-Id": ID },
+      redirect: "manual",
+    });
+    expect(download.status).toBe(302);
+    expect(download.headers.get("location")).toContain("v0.1.21/");
+  });
+});
+
+describe("immutable pinned trial delivery", () => {
+  it("delivers exact bytes and HEAD metadata only at the pinned hostname/path", async () => {
+    const headers = { "X-Forwarded-Host": "assets.example" };
+    const response = await fetch(`${baseUrl}/trial.AppImage`, { headers });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("content-length")).toBe("42");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(
+      Buffer.alloc(42, 7),
+    );
+    const head = await fetch(`${baseUrl}/trial.AppImage`, {
+      headers,
+      method: "HEAD",
+    });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("content-length")).toBe("42");
+    expect(await head.text()).toBe("");
+    for (const path of [
+      "/trial.AppImage?x=1",
+      "/trial.json",
+      "/assets/trial.AppImage",
+    ]) {
+      expect((await fetch(baseUrl + path, { headers })).status).toBe(404);
+    }
+    expect(
+      (
+        await fetch(`${baseUrl}/trial.AppImage`, {
+          headers: { "X-Forwarded-Host": "tauri.test" },
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (await fetch(`${baseUrl}/trial.AppImage`, { headers, method: "POST" }))
+        .status,
+    ).toBe(405);
   });
 });

@@ -39,6 +39,8 @@ All configuration is via environment variables:
 | `GITHUB_TOKEN` | _(none)_ | GitHub token for API requests (recommended to avoid rate limits) |
 | `LOG_DIR` | `./logs` | Directory for analytics logs and caches |
 | `DEFAULT_PRODUCT` | _(none)_ | Fallback product ID when hostname doesn't match |
+| `TRIAL_UPDATES_CONFIG` | _(none)_ | Private pinned opt-in cohort JSON; disabled by default |
+| `TRIAL_ASSETS_DIRECTORY` | _(none)_ | Optional immutable local payload directory, checked against trial hashes at startup |
 | `PRODUCTS_CONFIG` | `./products.json` | Path to a JSON file or directory of JSON files |
 
 ## Product Configuration
@@ -178,3 +180,58 @@ return JSON `404`; ambiguous matches are also logged. Missing release metadata,
 including old disk caches that lack asset details until the first successful
 refresh, returns JSON `503`. Existing updater routes and cache fallback remain
 unchanged.
+
+## Opt-in installed update trials
+
+Set `TRIAL_UPDATES_CONFIG` to a private JSON file containing one product/channel,
+1–32 canonical installation UUIDs, and one pinned candidate. Only an exact
+`X-CFU-Id` match on that product/channel selects it through the existing Tauri
+URL. Missing, malformed and unknown IDs keep ordinary GitHub selection.
+Installation IDs select a cohort; they are not authentication. No IP fallback,
+new public channel, query override or ordinary-cache mutation is involved.
+
+The file is bounded to 64 KiB and uses this shape (signatures below are
+placeholders, so this example intentionally cannot enable a trial):
+
+```json
+{
+  "schemaVersion": 1,
+  "productId": "example",
+  "channel": "stable",
+  "installationIds": ["01234567-89ab-4cde-8fab-0123456789ab"],
+  "candidate": {
+    "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "runId": "1234",
+    "attempt": 1,
+    "version": "0.3.0",
+    "notes": "Owned installed upgrade trial",
+    "pub_date": "2026-10-01T00:00:00Z",
+    "platforms": {
+      "linux-x86_64": {
+        "url": "https://updates.example/trials/pinned.AppImage",
+        "signature": "EXACT_TAURI_BASE64_MINISIGN_ENVELOPE",
+        "size": 1234,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  }
+}
+```
+
+Use one or more of `linux-x86_64`, `linux-aarch64`, `darwin-x86_64`,
+`darwin-aarch64`, and `windows-x86_64`. Pin and independently verify actual
+payloads/signatures before configuration; clients still authenticate with their
+embedded public key. Equal/newer versions and absent trial targets return 204.
+Invalid/unavailable trial configuration disables the trial and leaves ordinary
+updating available. A restart loads configuration atomically; an empty
+`TRIAL_UPDATES_CONFIG` followed by restart disables it without downgrades.
+
+Assets may use independently hosted, credential-free HTTPS URLs. Alternatively,
+set `TRIAL_ASSETS_DIRECTORY` to their local immutable directory. Startup checks
+every file's size (at most 512 MiB each) and SHA-256; failures disable the trial.
+The server serves only those exact configured hostname/path pairs, with GET/HEAD,
+no-store, bounded streaming and cancellation when a client disconnects. It has
+no directory browsing or upload API. Keep files immutable while running.
+Trial IDs/configuration remain private; payload URLs must work without Actions
+authentication. `/download`, `/version`, discovery and other products retain
+ordinary behavior. Remove trial configuration and assets after testing.
