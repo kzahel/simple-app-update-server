@@ -238,6 +238,7 @@ describe("package family selection", () => {
       .mockResolvedValueOnce(
         Response.json([
           named("desktop-v0.3.0", "JSTorrent_x64.app.tar.gz"),
+          named("desktop-vbad-version", "Unrelated_x64.app.tar.gz"),
           named("desktop-v0.1.4", "RSTorrent_x64.app.tar.gz"),
           named("desktop-v0.1.3", "RSTorrent_x64.app.tar.gz"),
         ]),

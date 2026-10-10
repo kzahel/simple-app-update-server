@@ -185,13 +185,13 @@ export async function fetchTauriReleases(
   const rule = channelsFor(product)[channel];
   if (!rule) throw new Error(`Unsupported channel ${product.id}/${channel}`);
   const filtered = publicSemanticReleases(
-    releases,
+    releases.filter(
+      (release) =>
+        rule.requiredAsset === undefined ||
+        release.assets.some((asset) => asset.name === rule.requiredAsset),
+    ),
     rule.tagPrefix,
     rule.releaseKind,
-  ).filter(
-    (release) =>
-      rule.requiredAsset === undefined ||
-      release.assets.some((asset) => asset.name === rule.requiredAsset),
   );
 
   const latestRelease = filtered[0];
