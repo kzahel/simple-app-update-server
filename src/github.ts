@@ -188,6 +188,10 @@ export async function fetchTauriReleases(
     releases,
     rule.tagPrefix,
     rule.releaseKind,
+  ).filter(
+    (release) =>
+      rule.requiredAsset === undefined ||
+      release.assets.some((asset) => asset.name === rule.requiredAsset),
   );
 
   const latestRelease = filtered[0];

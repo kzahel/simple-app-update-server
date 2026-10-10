@@ -2,7 +2,12 @@ import { createReadStream } from "node:fs";
 import * as http from "node:http";
 import { AnalyticsLogger } from "./analytics.js";
 import { Cache } from "./cache.js";
-import { channelsFor, selectChannel, stateKey } from "./channels.js";
+import {
+  channelCacheNamespace,
+  channelsFor,
+  selectChannel,
+  stateKey,
+} from "./channels.js";
 import { config } from "./config.js";
 import type {
   ArtifactManifestRelease,
@@ -94,12 +99,9 @@ function matchesAssetPattern(name: string, pattern: string): boolean {
 
 for (const product of products) {
   for (const channel of Object.keys(channelsFor(product))) {
-    // Preserve the existing Stable disk cache; never import it into another channel.
+    // Unmarked Stable retains its cache; marked package families are isolated.
     const rule = channelsFor(product)[channel];
-    const namespace =
-      channel === "stable"
-        ? ""
-        : `/channels/${channel}/${encodeURIComponent(`${rule.releaseKind}-${rule.tagPrefix}`)}`;
+    const namespace = channelCacheNamespace(channel, rule);
     const productDir = `${config.logDir}/${product.id}${namespace}`;
     const notesStore = new NotesStore(`${productDir}/notes-cache.json`);
 

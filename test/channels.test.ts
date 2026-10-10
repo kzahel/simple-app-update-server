@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Cache } from "../src/cache.js";
-import { channelsFor, selectChannel } from "../src/channels.js";
+import {
+  channelCacheNamespace,
+  channelsFor,
+  selectChannel,
+} from "../src/channels.js";
 import { fetchTauriReleases } from "../src/github.js";
 import type { ProductConfig } from "../src/products.js";
 import { compareVersions } from "../src/version.js";
 
-const product: ProductConfig = {
+const product = {
   id: "canary",
   displayName: "Canary",
   githubRepo: "owner/repo",
@@ -24,7 +28,7 @@ const product: ProductConfig = {
       releaseKind: "prerelease",
     },
   },
-};
+} satisfies ProductConfig;
 const release = (tag: string, prerelease = false, draft = false) => ({
   tag_name: tag,
   prerelease,
@@ -205,5 +209,114 @@ describe("channel cache reload", () => {
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("package family selection", () => {
+  const marked = (marker: string): ProductConfig => ({
+    ...product,
+    channels: Object.fromEntries(
+      Object.entries(product.channels).map(([id, rule]) => [
+        id,
+        { ...rule, requiredAsset: marker },
+      ]),
+    ),
+  });
+  const named = (tag: string, marker: string, preview = false) => ({
+    ...release(tag, preview),
+    assets: [
+      ...release(tag).assets,
+      { name: marker, browser_download_url: "https://downloads.test/package" },
+    ],
+  });
+  it.each([
+    ["RSTorrent_x64.app.tar.gz", "0.1.4"],
+    ["JSTorrent_x64.app.tar.gz", "0.3.0"],
+  ])("separates %s from releases sharing a tag prefix and notes", async (marker, version) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json([
+          named("desktop-v0.3.0", "JSTorrent_x64.app.tar.gz"),
+          named("desktop-v0.1.4", "RSTorrent_x64.app.tar.gz"),
+          named("desktop-v0.1.3", "RSTorrent_x64.app.tar.gz"),
+        ]),
+      )
+      .mockResolvedValueOnce(Response.json({ version, platforms: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await fetchTauriReleases(marked(marker), "");
+    expect(result?.latest.version).toBe(version);
+    expect(result?.freshNotes.map((note) => note.version)).toEqual(
+      marker.startsWith("RSTorrent") ? ["0.1.4", "0.1.3"] : ["0.3.0"],
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      `https://downloads.test/desktop-v${version}.json`,
+    );
+  });
+  it("does not offer preview Latest to production when no production Latest exists", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json([
+          named("desktop-latest-v0.2.801", "RSTorrent_x64.app.tar.gz", true),
+        ]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    expect(
+      await fetchTauriReleases(
+        marked("JSTorrent_x64.app.tar.gz"),
+        "",
+        "latest",
+      ),
+    ).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("retains preview Latest in its own family", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json([
+            named("desktop-latest-v0.2.801", "RSTorrent_x64.app.tar.gz", true),
+            named("desktop-latest-v0.9.999", "JSTorrent_x64.app.tar.gz", true),
+          ]),
+        )
+        .mockResolvedValueOnce(
+          Response.json({ version: "0.2.801", platforms: {} }),
+        ),
+    );
+    expect(
+      (
+        await fetchTauriReleases(
+          marked("RSTorrent_x64.app.tar.gz"),
+          "",
+          "latest",
+        )
+      )?.latest.version,
+    ).toBe("0.2.801");
+  });
+  it("isolates qualified cache and notes from unqualified or other-family fallback", () => {
+    const legacy = product.channels.stable;
+    expect(channelCacheNamespace("stable", legacy)).toBe("");
+    expect(channelCacheNamespace("latest", product.channels.latest)).toBe(
+      "/channels/latest/prerelease-desktop-latest-v",
+    );
+    const preview = channelCacheNamespace("stable", {
+      ...legacy,
+      requiredAsset: "RSTorrent_x64.app.tar.gz",
+    });
+    const production = channelCacheNamespace("stable", {
+      ...legacy,
+      requiredAsset: "JSTorrent_x64.app.tar.gz",
+    });
+    expect(preview).not.toBe("");
+    expect(production).not.toBe(preview);
+    expect(production).not.toBe(
+      channelCacheNamespace("latest", {
+        ...legacy,
+        requiredAsset: "JSTorrent_x64.app.tar.gz",
+      }),
+    );
   });
 });

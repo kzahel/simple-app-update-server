@@ -4,6 +4,8 @@ export interface ChannelConfig {
   displayName: string;
   tagPrefix: string;
   releaseKind: "release" | "prerelease";
+  /** Exact asset identifying a package family when tag prefixes overlap. */
+  requiredAsset?: string;
 }
 
 export const CHANNEL_ID = /^[a-z][a-z0-9-]{0,31}$/;
@@ -42,4 +44,16 @@ export function selectChannel(
 
 export function stateKey(product: ProductConfig, channel: string): string {
   return channel === "stable" ? product.id : `${product.id}:${channel}`;
+}
+
+/** Isolate marked rules from any unqualified persisted candidate or notes. */
+export function channelCacheNamespace(
+  channel: string,
+  rule: ChannelConfig,
+): string {
+  if (channel === "stable" && rule.requiredAsset === undefined) return "";
+  const identity =
+    `${rule.releaseKind}-${rule.tagPrefix}` +
+    (rule.requiredAsset === undefined ? "" : `-asset-${rule.requiredAsset}`);
+  return `/channels/${channel}/${encodeURIComponent(identity)}`;
 }

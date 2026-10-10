@@ -142,7 +142,12 @@ names. Update and version routes accept one `?channel=<id>`; omission preserves
 Stable. Explicit empty, duplicate, malformed or unsupported channels return
 400. Responses identify the channel with `X-Update-Channel`; Tauri candidates
 also carry `channel` in JSON. Drafts are always excluded, and a channel selects
-only its exact tag prefix and release kind. Numeric version ordering, rather
+only its exact tag prefix and release kind. An optional `requiredAsset`
+channel field further requires an exact release asset name before version
+selection and notes collection. Use it when package families share tag prefixes
+but have different client identities or signing roots. It is a selection guard;
+clients still verify updater signatures. An absent eligible release offers no
+candidate. Numeric version ordering, rather
 than publication time, determines the candidate. Tauri tag/metadata version
 mismatches fail closed. Pagination preserves access to Stable after frequent
 preview publication. New channel clients must discover support before using
@@ -150,7 +155,9 @@ Latest against independently deployed servers.
 
 Stable retains its existing cache/notes files. Additional channels use separate
 `channels/<id>/<encoded-release-rule>/` directories; they never inherit Stable
-fallback. Removing a channel makes its explicit requests unavailable. Each
+fallback. Marked rules, including Stable, also isolate their cache and notes by
+the required asset, so older unqualified fallback cannot cross package families.
+Removing a channel makes its explicit requests unavailable. Each
 channel retains its last successful candidate across transient GitHub failures
 and rejects regressing candidate versions. Analytics include channel identity.
 The canary contract is maintained in desktop-release-kit's

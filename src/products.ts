@@ -120,7 +120,10 @@ export function validateProduct(p: unknown, label: string): ProductConfig {
         !channel.displayName.trim() ||
         typeof channel.tagPrefix !== "string" ||
         !channel.tagPrefix ||
-        !["release", "prerelease"].includes(channel.releaseKind)
+        !["release", "prerelease"].includes(channel.releaseKind) ||
+        (channel.requiredAsset !== undefined &&
+          (typeof channel.requiredAsset !== "string" ||
+            !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(channel.requiredAsset)))
       ) {
         throw new Error(`${label}.channels.${id}: invalid channel rule`);
       }

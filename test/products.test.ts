@@ -96,3 +96,30 @@ describe("installer download configuration", () => {
     ).toThrow();
   });
 });
+
+describe("package marker validation", () => {
+  it("accepts exact asset names and rejects paths, empty and unbounded input", () => {
+    const configured = (requiredAsset: unknown) => ({
+      ...product,
+      channels: { stable: { ...stable, requiredAsset } },
+    });
+    expect(
+      validateProduct(configured("JSTorrent_x64.app.tar.gz"), "fixture")
+        .channels?.stable.requiredAsset,
+    ).toBe("JSTorrent_x64.app.tar.gz");
+    for (const invalid of [
+      null,
+      7,
+      "",
+      "../App.tar.gz",
+      "a/b",
+      "a\\b",
+      "App*",
+      "x".repeat(201),
+    ]) {
+      expect(() => validateProduct(configured(invalid), "fixture")).toThrow(
+        "invalid channel rule",
+      );
+    }
+  });
+});
