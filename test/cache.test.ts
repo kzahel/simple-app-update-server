@@ -90,4 +90,23 @@ describe("Cache", () => {
     cache.invalidate();
     expect(await cache.get()).toBe("data-2");
   });
+  it("caches successful emptiness but retries an unavailable upstream", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce("release");
+    const cache = new Cache<string>(fetch, 60_000);
+    expect(await cache.get()).toBeNull();
+    expect(cache.hasFreshEmptyResult).toBe(true);
+    expect(await cache.get()).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    cache.invalidate();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await cache.get()).toBeNull();
+    expect(cache.hasFreshEmptyResult).toBe(false);
+    expect(await cache.get()).toBe("release");
+    expect(cache.hasFreshEmptyResult).toBe(false);
+    vi.restoreAllMocks();
+  });
 });

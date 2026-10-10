@@ -220,7 +220,15 @@ async function handleTauriUpdateCheck(
   );
   const latest = trial ?? (await state.cache.get());
   if (!latest) {
-    sendJson(res, 500, { error: "Unable to fetch release info" });
+    if (
+      channelsFor(state.product)[state.channel].requiredAsset &&
+      state.cache.hasFreshEmptyResult
+    ) {
+      res.writeHead(204);
+      res.end();
+    } else {
+      sendJson(res, 500, { error: "Unable to fetch release info" });
+    }
     return;
   }
 

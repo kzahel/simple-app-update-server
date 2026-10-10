@@ -4,6 +4,7 @@ import * as path from "node:path";
 export class Cache<T> {
   private data: T | null = null;
   private fetchedAt = 0;
+  private emptyFetchedAt = 0;
   private inflight: Promise<T | null> | null = null;
 
   constructor(
@@ -24,10 +25,20 @@ export class Cache<T> {
     }
   }
 
+  /** A successful empty fetch differs from an unavailable upstream. */
+  get hasFreshEmptyResult(): boolean {
+    return (
+      this.data === null &&
+      this.emptyFetchedAt > 0 &&
+      Date.now() - this.emptyFetchedAt < this.ttlMs
+    );
+  }
+
   async get(): Promise<T | null> {
     if (this.data && Date.now() - this.fetchedAt < this.ttlMs) {
       return this.data;
     }
+    if (this.hasFreshEmptyResult) return null;
     // Deduplicate concurrent fetches
     if (!this.inflight) {
       this.inflight = this.fetchFn()
@@ -37,6 +48,8 @@ export class Cache<T> {
             this.fetchedAt = Date.now();
             this.writeToDisk(result);
           }
+          this.emptyFetchedAt =
+            result === null && this.data === null ? Date.now() : 0;
           this.inflight = null;
           return this.data;
         })
@@ -51,6 +64,7 @@ export class Cache<T> {
 
   invalidate(): void {
     this.fetchedAt = 0;
+    this.emptyFetchedAt = 0;
   }
 
   private writeToDisk(data: T): void {

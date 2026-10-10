@@ -107,17 +107,24 @@ vi.mock("../src/github.js", async (importOriginal) => {
       .mockResolvedValue(MOCK_ARTIFACT_RESULT),
     fetchTauriReleases: vi
       .fn()
-      .mockImplementation((_product, _token, channel) =>
-        Promise.resolve(
-          channel === "latest"
-            ? {
-                latest: { ...MOCK_TAURI_RESULT.latest, version: "0.2.101" },
-                freshNotes: [
-                  { version: "0.2.101", notes: "Latest-only notes" },
-                ],
-              }
-            : MOCK_TAURI_RESULT,
-        ),
+      .mockImplementation((product, _token, channel) =>
+        product.id === "test-empty"
+          ? Promise.resolve(null)
+          : product.id === "test-unavailable"
+            ? Promise.reject(new Error("upstream unavailable"))
+            : Promise.resolve(
+                channel === "latest"
+                  ? {
+                      latest: {
+                        ...MOCK_TAURI_RESULT.latest,
+                        version: "0.2.101",
+                      },
+                      freshNotes: [
+                        { version: "0.2.101", notes: "Latest-only notes" },
+                      ],
+                    }
+                  : MOCK_TAURI_RESULT,
+              ),
       ),
     fetchSimpleReleases: vi.fn().mockImplementation((product) => {
       if (product.tagPrefix === "bridge-v")
@@ -155,6 +162,22 @@ const MOCK_BRIDGE_RESULT: SimpleFetchResult = {
 // Mock products
 vi.mock("../src/products.js", () => {
   const products = [
+    ...["empty", "unavailable"].map((name) => ({
+      id: `test-${name}`,
+      displayName: name,
+      hostnames: [`${name}.test`],
+      githubRepo: "test/tauri",
+      tagPrefix: "v",
+      tauriUpdates: true,
+      channels: {
+        stable: {
+          displayName: "Stable",
+          tagPrefix: "v",
+          releaseKind: "release",
+          requiredAsset: "Production.app.tar.gz",
+        },
+      },
+    })),
     {
       channels: {
         stable: {
@@ -849,5 +872,29 @@ describe("immutable pinned trial delivery", () => {
       (await fetch(`${baseUrl}/trial.AppImage`, { headers, method: "POST" }))
         .status,
     ).toBe(405);
+  });
+});
+
+describe("marked package families without an available release", () => {
+  it("returns no update for successfully fetched empty releases", async () => {
+    const response = await fetch(`${baseUrl}/tauri/linux/x86_64/0.0.0`, {
+      headers: { "X-Forwarded-Host": "empty.test" },
+    });
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+  });
+  it("retains an error when GitHub is unavailable", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await fetch(`${baseUrl}/tauri/linux/x86_64/0.0.0`, {
+        headers: { "X-Forwarded-Host": "unavailable.test" },
+      });
+      expect(response.status).toBe(500);
+      expect(await json(response)).toEqual({
+        error: "Unable to fetch release info",
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });

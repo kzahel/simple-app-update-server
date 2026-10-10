@@ -242,3 +242,8 @@ no directory browsing or upload API. Keep files immutable while running.
 Trial IDs/configuration remain private; payload URLs must work without Actions
 authentication. `/download`, `/version`, discovery and other products retain
 ordinary behavior. Remove trial configuration and assets after testing.
+
+Marked package-family Tauri checks return 204 when a successful GitHub fetch
+contains no eligible release, as when a new Latest channel has not shipped.
+Empty results are cached for the ordinary TTL; upstream fetch failures remain
+errors when there is no previously selected release to offer.
