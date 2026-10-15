@@ -14,6 +14,15 @@ export interface UpdateCheckEvent {
   userAgent: string;
   cfuId: string;
   checkReason: string;
+  statistics?: "on" | "off" | "unreviewed";
+}
+
+export function parseStatistics(
+  value: string | string[] | undefined,
+): UpdateCheckEvent["statistics"] {
+  return value === "on" || value === "off" || value === "unreviewed"
+    ? value
+    : undefined;
 }
 
 export class AnalyticsLogger {

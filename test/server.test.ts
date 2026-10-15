@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import {
@@ -349,6 +349,51 @@ describe("GET /health", () => {
     const res = await fetch(`${baseUrl}/health`);
     expect(res.status).toBe(200);
     expect(await json(res)).toEqual({ ok: true });
+  });
+});
+
+describe.each([
+  ["test-tauri", "tauri.test", "/tauri/darwin/aarch64/0.1.20"],
+  ["test-simple", "simple.test", "/version/0.4.5"],
+  ["test-crostini", "simple.test", "/crostini/manifest/x86_64/0.0.9"],
+])("Statistics logging for %s", (product, host, route) => {
+  it.each([
+    ["on", "on"],
+    ["off", "off"],
+    ["unreviewed", "unreviewed"],
+    [undefined, undefined],
+    ["", undefined],
+    ["ON", undefined],
+    ["invalid", undefined],
+    ["on, off", undefined],
+    ["x".repeat(1024), undefined],
+  ])("records only an allowed X-Statistics value: %s", async (value, expected) => {
+    const reason = `statistics-${String(value)}`;
+    const headers: Record<string, string> = {
+      "X-Forwarded-Host": host,
+      "X-Check-Reason": reason,
+    };
+    if (value !== undefined) headers["X-Statistics"] = value;
+    const res = await fetch(`${baseUrl}${route}`, { headers });
+    expect(res.status).toBe(200);
+    await res.arrayBuffer();
+
+    const logPath = `${testDir}/${product}/${new Date().toISOString().slice(0, 10)}.ndjson`;
+    const entry = await vi.waitFor(() => {
+      const entries = readFileSync(logPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const logged = entries.find((e) => e.checkReason === reason);
+      expect(logged).toBeDefined();
+      return logged;
+    });
+    if (expected === undefined) {
+      expect(entry).not.toHaveProperty("statistics");
+    } else {
+      expect(entry.statistics).toBe(expected);
+    }
+    expect(entry.cfuId).toBe("");
   });
 });
 

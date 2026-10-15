@@ -90,6 +90,11 @@ npm run check     # lint + typecheck + test
 
 ## Production
 
+Update-check analytics accept `X-Statistics: on`, `off`, or `unreviewed` and
+record it as the optional `statistics` field in the product's NDJSON logs.
+Missing or invalid values are omitted, preserving older clients' log format.
+The header itself contains no installation identifier.
+
 ```bash
 npm run build     # bundle with esbuild
 npm start         # run bundled server

@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import * as http from "node:http";
-import { AnalyticsLogger } from "./analytics.js";
+import { AnalyticsLogger, parseStatistics } from "./analytics.js";
 import { Cache } from "./cache.js";
 import {
   channelCacheNamespace,
@@ -257,6 +257,7 @@ async function handleTauriUpdateCheck(
     userAgent: req.headers["user-agent"] || "",
     cfuId: (req.headers["x-cfu-id"] as string) || "",
     checkReason: (req.headers["x-check-reason"] as string) || "",
+    statistics: parseStatistics(req.headers["x-statistics"]),
   });
 
   if (!updateAvailable) {
@@ -296,6 +297,7 @@ async function handleVersionCheck(
       userAgent: req.headers["user-agent"] || "",
       cfuId: (req.headers["x-cfu-id"] as string) || "",
       checkReason: (req.headers["x-check-reason"] as string) || "",
+      statistics: parseStatistics(req.headers["x-statistics"]),
     });
 
     if (!updateAvailable) {
@@ -342,6 +344,7 @@ async function handleArtifactManifestCheck(
       userAgent: req.headers["user-agent"] || "",
       cfuId: (req.headers["x-cfu-id"] as string) || "",
       checkReason: (req.headers["x-check-reason"] as string) || "",
+      statistics: parseStatistics(req.headers["x-statistics"]),
     });
     if (!updateAvailable) {
       res.writeHead(204);
