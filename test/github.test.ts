@@ -205,3 +205,68 @@ describe("release selection", () => {
     expect(result?.latest.version).toBe("1.10.0");
   });
 });
+
+describe("Tauri database compatibility release contract", () => {
+  function mockManifest(manifest: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify([
+              {
+                tag_name: "desktop-v0.3.2",
+                assets: [
+                  {
+                    name: "latest.json",
+                    browser_download_url: "https://example.test/latest.json",
+                  },
+                ],
+              },
+            ]),
+          ),
+        )
+        .mockResolvedValueOnce(new Response(JSON.stringify(manifest))),
+    );
+  }
+  const manifest = {
+    version: "0.3.2",
+    platforms: {
+      "darwin-aarch64": {
+        url: "https://example.test/app",
+        signature: "signature",
+      },
+    },
+  };
+  it("requires metadata at the configured version boundary", async () => {
+    mockManifest(manifest);
+    await expect(
+      fetchTauriReleases(
+        { ...TAURI_PRODUCT, compatibilityRequiredFrom: "0.3.2" },
+        "",
+      ),
+    ).rejects.toThrow("missing release compatibility");
+  });
+  it("preserves old product contracts without opting them in", async () => {
+    mockManifest(manifest);
+    expect((await fetchTauriReleases(TAURI_PRODUCT, ""))?.latest.version).toBe(
+      "0.3.2",
+    );
+  });
+  it("rejects malformed compatibility instead of caching it", async () => {
+    mockManifest({
+      ...manifest,
+      compatibility: { data: "invalid", signature: "s" },
+    });
+    await expect(fetchTauriReleases(TAURI_PRODUCT, "")).rejects.toThrow(
+      "compatibility",
+    );
+  });
+  it("bounds streamed metadata even without content-length", async () => {
+    mockManifest({ ...manifest, notes: "a".repeat(65536) });
+    await expect(fetchTauriReleases(TAURI_PRODUCT, "")).rejects.toThrow(
+      "Oversized",
+    );
+  });
+});

@@ -2,10 +2,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CHANNEL_ID, type ChannelConfig } from "./channels.js";
 import { config } from "./config.js";
+import { isValidVersion } from "./version.js";
 
 export interface ProductConfig {
   /** Slug used in log filenames, URL paths, display */
   id: string;
+  /** New releases at/above this version require authenticated database metadata. */
+  compatibilityRequiredFrom?: string;
   channels?: Record<string, ChannelConfig>;
   /** Display name for stats dashboard */
   displayName: string;
@@ -101,6 +104,16 @@ export function validateProduct(p: unknown, label: string): ProductConfig {
     }
   }
   const product = p as ProductConfig;
+  if (
+    product.compatibilityRequiredFrom !== undefined &&
+    (!product.tauriUpdates ||
+      typeof product.compatibilityRequiredFrom !== "string" ||
+      !isValidVersion(product.compatibilityRequiredFrom))
+  ) {
+    throw new Error(
+      `${label}.compatibilityRequiredFrom: requires a Tauri product and numeric version`,
+    );
+  }
   if (product.channels !== undefined) {
     if (
       !product.tauriUpdates ||

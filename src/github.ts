@@ -1,8 +1,13 @@
 import { channelsFor } from "./channels.js";
+import {
+  type SignedCompatibility,
+  validateCompatibility,
+} from "./compatibility.js";
 import type { ProductConfig } from "./products.js";
 import { compareVersions, isValidVersion } from "./version.js";
 
 export interface LatestJson {
+  compatibility?: SignedCompatibility;
   version: string;
   notes: string;
   pub_date: string;
@@ -31,6 +36,7 @@ export interface ArtifactManifestRelease {
 }
 
 export interface PlatformUpdate {
+  compatibility?: SignedCompatibility;
   version: string;
   notes: string;
   pub_date: string;
@@ -209,13 +215,45 @@ export async function fetchTauriReleases(
     throw new Error(`Failed to fetch latest.json: ${jsonRes.status}`);
   }
 
-  const latest = (await jsonRes.json()) as LatestJson;
+  if (Number(jsonRes.headers.get("content-length")) > 64 * 1024)
+    throw new Error("Oversized latest.json");
+  const reader = jsonRes.body?.getReader();
+  if (!reader) throw new Error("Missing latest.json body");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > 64 * 1024) throw new Error("Oversized latest.json");
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel();
+  }
+  const latest = JSON.parse(
+    Buffer.concat(chunks).toString("utf8"),
+  ) as LatestJson;
   if (
     latest.version !== latestRelease.tag_name.slice(rule.tagPrefix.length) ||
     !isValidVersion(latest.version) ||
     !latest.platforms
   ) {
     throw new Error(`${product.id}/${channel}: latest.json identity mismatch`);
+  }
+  if (latest.compatibility !== undefined) {
+    latest.compatibility = validateCompatibility(
+      latest.compatibility,
+      latest.version,
+    );
+  } else if (
+    product.compatibilityRequiredFrom &&
+    compareVersions(latest.version, product.compatibilityRequiredFrom) >= 0
+  ) {
+    throw new Error(
+      `${product.id}/${channel}: missing release compatibility metadata`,
+    );
   }
   const freshNotes = extractVersionNotes(filtered, rule.tagPrefix);
 
@@ -343,5 +381,6 @@ export function findPlatformUpdate(
     pub_date: latest.pub_date,
     url: platform.url,
     signature: platform.signature,
+    ...(latest.compatibility ? { compatibility: latest.compatibility } : {}),
   };
 }

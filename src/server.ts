@@ -101,7 +101,11 @@ for (const product of products) {
   for (const channel of Object.keys(channelsFor(product))) {
     // Unmarked Stable retains its cache; marked package families are isolated.
     const rule = channelsFor(product)[channel];
-    const namespace = channelCacheNamespace(channel, rule);
+    const namespace =
+      channelCacheNamespace(channel, rule) +
+      (product.compatibilityRequiredFrom
+        ? `/compatibility-${product.compatibilityRequiredFrom}`
+        : "");
     const productDir = `${config.logDir}/${product.id}${namespace}`;
     const notesStore = new NotesStore(`${productDir}/notes-cache.json`);
 

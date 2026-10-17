@@ -252,3 +252,23 @@ Marked package-family Tauri checks return 204 when a successful GitHub fetch
 contains no eligible release, as when a new Latest channel has not shipped.
 Empty results are cached for the ordinary TTL; upstream fetch failures remain
 errors when there is no previously selected release to offer.
+
+### Database-compatible Tauri releases
+
+A Tauri product may set `compatibilityRequiredFrom` to a numeric application
+version. Older releases and products without this opt-in retain their existing
+response shape. At or above the boundary, `latest.json` must contain
+`compatibility: { data, signature }`. `data` is base64 of the exact signed JSON
+bytes; `signature` is the application's ordinary base64 Tauri/minisign detached
+signature. The document has `schemaVersion: 1`, `version`, `identifier`,
+`platforms` (the exact updater URL/signature pairs) and `databases`:
+`{ schemaVersion: 1, stores: { session, product, metrics } }`. Each store has
+`floor`, `target` and a contiguous `lineage` map of schema number to SHA-256
+migration-prefix fingerprint. Metadata is capped at 64 KiB; encoded document
+and signature are capped at 48 KiB and 4 KiB. History has at most 256 entries
+per store. The service validates transport/identity and returns the exact
+signed envelope on the platform response. Native clients authenticate it with
+the embedded application key, bind it to the selected payload, inspect their
+local stores, and refuse incompatible updates before installation. The server
+never needs database contents or paths. A required-metadata policy has its own
+cache namespace, keeping legacy disk fallbacks out of the new contract.
