@@ -134,6 +134,8 @@ export function validateProduct(p: unknown, label: string): ProductConfig {
         typeof channel.tagPrefix !== "string" ||
         !channel.tagPrefix ||
         !["release", "prerelease"].includes(channel.releaseKind) ||
+        (channel.automaticInstall !== undefined &&
+          typeof channel.automaticInstall !== "boolean") ||
         (channel.requiredAsset !== undefined &&
           (typeof channel.requiredAsset !== "string" ||
             !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(channel.requiredAsset)))

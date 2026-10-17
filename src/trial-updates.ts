@@ -21,6 +21,7 @@ export interface TrialUpdates {
     sourceSha: string;
     runId: string;
     attempt: number;
+    automaticInstall?: boolean;
     platforms: Record<
       string,
       { url: string; signature: string; size: number; sha256: string }
@@ -78,6 +79,12 @@ export function validateTrialUpdates(value: unknown): TrialUpdates {
     !Number.isFinite(Date.parse(candidate.pub_date))
   ) {
     throw new Error("Invalid pinned candidate identity/metadata");
+  }
+  if (
+    candidate.automaticInstall !== undefined &&
+    typeof candidate.automaticInstall !== "boolean"
+  ) {
+    throw new Error("Invalid cohort installation policy");
   }
   const platforms = object(candidate.platforms);
   if (

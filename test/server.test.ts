@@ -186,6 +186,7 @@ vi.mock("../src/products.js", () => {
           releaseKind: "release",
         },
         latest: {
+          automaticInstall: true,
           displayName: "Latest",
           tagPrefix: "latest-v",
           releaseKind: "prerelease",
@@ -810,6 +811,7 @@ describe("opt-in pinned trial at the unchanged updater URL", () => {
     expect(trial.status).toBe(200);
     expect(trial.headers.get("cache-control")).toBe("no-store");
     expect(trial.headers.get("x-update-channel")).toBe("stable");
+    expect(trial.headers.get("x-automatic-install")).toBe("true");
     const result = await json(trial);
     expect(result.version).toBe("0.3.0");
     expect(result.channel).toBe("stable");
@@ -821,6 +823,7 @@ describe("opt-in pinned trial at the unchanged updater URL", () => {
       headers: { "X-Forwarded-Host": "tauri.test" },
     });
     expect(ordinary.status).toBe(204); // Ordinary release remains 0.1.21.
+    expect(ordinary.headers.get("x-automatic-install")).toBe("false");
     expect(fetchTauriReleases).toHaveBeenCalledTimes(1);
     const oldOrdinary = await fetch(`${baseUrl}/tauri/linux/x86_64/0.1.0`, {
       headers: { "X-Forwarded-Host": "tauri.test" },
@@ -942,4 +945,51 @@ describe("marked package families without an available release", () => {
       vi.restoreAllMocks();
     }
   });
+});
+
+describe("compatible channel transport", () => {
+  it("returns healthy empty discovery without hiding an unavailable upstream", async () => {
+    const empty = await fetch(`${baseUrl}/version`, {
+      headers: { "X-Forwarded-Host": "empty.test" },
+    });
+    expect(empty.status).toBe(204);
+    expect(empty.headers.get("X-Update-Channel")).toBe("stable");
+    const mute = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const unavailable = await fetch(`${baseUrl}/version`, {
+        headers: { "X-Forwarded-Host": "unavailable.test" },
+      });
+      expect(unavailable.status).toBe(500);
+    } finally {
+      mute.mockRestore();
+    }
+  });
+  it("forwards the exact opaque authentication envelope over real HTTP", async () => {
+    const envelope = {
+      data: Buffer.from("authenticated release bytes").toString("base64"),
+      signature: "opaque-test-signature",
+    };
+    MOCK_TAURI_RESULT.latest.compatibility = envelope;
+    try {
+      const response = await fetch(`${baseUrl}/tauri/darwin/aarch64/0.1.20`, {
+        headers: { "X-Forwarded-Host": "tauri.test" },
+      });
+      expect(response.status).toBe(200);
+      expect((await json(response)).compatibility).toEqual(envelope);
+    } finally {
+      delete MOCK_TAURI_RESULT.latest.compatibility;
+    }
+  });
+});
+
+it("enables automatic installation only on the configured channel", async () => {
+  const response = await fetch(
+    `${baseUrl}/tauri/darwin/aarch64/0.0.0?channel=latest`,
+    { headers: { "X-Forwarded-Host": "tauri.test" } },
+  );
+  expect(response.headers.get("x-automatic-install")).toBe("true");
+  const stable = await fetch(`${baseUrl}/tauri/darwin/aarch64/0.0.0`, {
+    headers: { "X-Forwarded-Host": "tauri.test" },
+  });
+  expect(stable.headers.get("x-automatic-install")).toBe("false");
 });

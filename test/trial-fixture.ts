@@ -9,6 +9,7 @@ export function trialFixture() {
     channel: "stable",
     installationIds: [ID],
     candidate: {
+      automaticInstall: true,
       sourceSha: "a".repeat(40),
       runId: "1234",
       attempt: 1,

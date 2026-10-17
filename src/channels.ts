@@ -6,6 +6,8 @@ export interface ChannelConfig {
   releaseKind: "release" | "prerelease";
   /** Exact asset identifying a package family when tag prefixes overlap. */
   requiredAsset?: string;
+  /** Rollout permission; capable native clients still enforce opt-out and admission. */
+  automaticInstall?: boolean;
 }
 
 export const CHANNEL_ID = /^[a-z][a-z0-9-]{0,31}$/;

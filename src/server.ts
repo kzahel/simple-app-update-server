@@ -222,6 +222,11 @@ async function handleTauriUpdateCheck(
     state.channel,
     req.headers["x-cfu-id"],
   );
+  const automaticInstall =
+    trial?.automaticInstall ??
+    channelsFor(state.product)[state.channel].automaticInstall ??
+    false;
+  res.setHeader("X-Automatic-Install", automaticInstall ? "true" : "false");
   const latest = trial ?? (await state.cache.get());
   if (!latest) {
     if (
@@ -647,7 +652,15 @@ self.addEventListener('fetch', e => {
       // For Tauri products, /version returns just the latest version
       const latest = await (state as TauriProductState).cache.get();
       if (!latest) {
-        sendJson(res, 500, { error: "Unable to fetch release info" });
+        if (
+          channelsFor(product)[channel].requiredAsset &&
+          state.cache.hasFreshEmptyResult
+        ) {
+          res.writeHead(204);
+          res.end();
+        } else {
+          sendJson(res, 500, { error: "Unable to fetch release info" });
+        }
         return;
       }
       sendJson(res, 200, {

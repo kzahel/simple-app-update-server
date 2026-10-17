@@ -272,3 +272,12 @@ the embedded application key, bind it to the selected payload, inspect their
 local stores, and refuse incompatible updates before installation. The server
 never needs database contents or paths. A required-metadata policy has its own
 cache namespace, keeping legacy disk fallbacks out of the new contract.
+
+A channel may set `automaticInstall: true` to permit unattended installation.
+The platform response carries `X-Automatic-Install: true|false`, including 204
+responses; absence defaults off in capable native clients. Manual installation
+is unaffected. An explicitly pinned trial may override this for its installation
+cohort, without changing public channel policy. Clients recheck permission
+before shutdown, so a rollout can be paused without rebuilding packages or
+changing any signing root. Healthy empty marked channels return 204 from both
+`/version` and `/tauri`; upstream failures remain errors.
