@@ -187,6 +187,7 @@ vi.mock("../src/products.js", () => {
         },
         latest: {
           automaticInstall: true,
+          automaticInstallTargets: ["darwin-aarch64"],
           displayName: "Latest",
           tagPrefix: "latest-v",
           releaseKind: "prerelease",
@@ -982,7 +983,7 @@ describe("compatible channel transport", () => {
   });
 });
 
-it("enables automatic installation only on the configured channel", async () => {
+it("enables automatic installation only on the configured channel and target", async () => {
   const response = await fetch(
     `${baseUrl}/tauri/darwin/aarch64/0.0.0?channel=latest`,
     { headers: { "X-Forwarded-Host": "tauri.test" } },
@@ -992,4 +993,9 @@ it("enables automatic installation only on the configured channel", async () => 
     headers: { "X-Forwarded-Host": "tauri.test" },
   });
   expect(stable.headers.get("x-automatic-install")).toBe("false");
+  const other = await fetch(`${baseUrl}/tauri/windows/x86_64/0.0.0?channel=latest`, {
+    headers: { "X-Forwarded-Host": "tauri.test" },
+  });
+  expect(other.status).toBe(200);
+  expect(other.headers.get("x-automatic-install")).toBe("false");
 });

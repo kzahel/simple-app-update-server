@@ -123,3 +123,9 @@ describe("package marker validation", () => {
     }
   });
 });
+
+it("bounds and validates optional automatic target allowlists",()=>{
+ const registry=(automaticInstallTargets:unknown)=>({...product,channels:{stable:{...stable,automaticInstall:true,automaticInstallTargets}}});
+ expect(validateProduct(registry(['darwin-aarch64']),'fixture').channels?.stable.automaticInstallTargets).toEqual(['darwin-aarch64']);
+ for(const targets of [null,'darwin-aarch64',[null],['darwin/aarch64'],['darwin-aarch64','darwin-aarch64'],Array.from({length:33},(_,i)=>'linux-arch'+i)])expect(()=>validateProduct(registry(targets),'fixture')).toThrow();
+});

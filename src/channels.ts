@@ -8,6 +8,8 @@ export interface ChannelConfig {
   requiredAsset?: string;
   /** Rollout permission; capable native clients still enforce opt-out and admission. */
   automaticInstall?: boolean;
+  /** Optional exact updater targets qualified for unattended installation. */
+  automaticInstallTargets?: string[];
 }
 
 export const CHANNEL_ID = /^[a-z][a-z0-9-]{0,31}$/;
@@ -58,4 +60,10 @@ export function channelCacheNamespace(
     `${rule.releaseKind}-${rule.tagPrefix}` +
     (rule.requiredAsset === undefined ? "" : `-asset-${rule.requiredAsset}`);
   return `/channels/${channel}/${encodeURIComponent(identity)}`;
+}
+
+/** Missing permission fails closed; a target list can narrow an enabled channel. */
+export function automaticInstallAllowed(rule: ChannelConfig, target: string, arch: string): boolean {
+  return rule.automaticInstall === true &&
+    (rule.automaticInstallTargets === undefined || rule.automaticInstallTargets.includes(`${target}-${arch}`));
 }

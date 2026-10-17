@@ -5,6 +5,7 @@ import { Cache } from "./cache.js";
 import {
   channelCacheNamespace,
   channelsFor,
+  automaticInstallAllowed,
   selectChannel,
   stateKey,
 } from "./channels.js";
@@ -224,8 +225,7 @@ async function handleTauriUpdateCheck(
   );
   const automaticInstall =
     trial?.automaticInstall ??
-    channelsFor(state.product)[state.channel].automaticInstall ??
-    false;
+    automaticInstallAllowed(channelsFor(state.product)[state.channel], target, arch);
   res.setHeader("X-Automatic-Install", automaticInstall ? "true" : "false");
   const latest = trial ?? (await state.cache.get());
   if (!latest) {

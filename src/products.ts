@@ -136,6 +136,11 @@ export function validateProduct(p: unknown, label: string): ProductConfig {
         !["release", "prerelease"].includes(channel.releaseKind) ||
         (channel.automaticInstall !== undefined &&
           typeof channel.automaticInstall !== "boolean") ||
+        (channel.automaticInstallTargets !== undefined &&
+          (!Array.isArray(channel.automaticInstallTargets) ||
+            channel.automaticInstallTargets.length > 32 ||
+            new Set(channel.automaticInstallTargets).size !== channel.automaticInstallTargets.length ||
+            channel.automaticInstallTargets.some(target => typeof target !== "string" || !/^[a-z][a-z0-9_]{0,31}-[a-z0-9][a-z0-9_-]{0,63}$/.test(target)))) ||
         (channel.requiredAsset !== undefined &&
           (typeof channel.requiredAsset !== "string" ||
             !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(channel.requiredAsset)))

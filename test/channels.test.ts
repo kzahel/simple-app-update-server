@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Cache } from "../src/cache.js";
 import {
   channelCacheNamespace,
+  automaticInstallAllowed,
   channelsFor,
   selectChannel,
 } from "../src/channels.js";
@@ -320,4 +321,17 @@ describe("package family selection", () => {
       }),
     );
   });
+});
+
+it("narrows unattended rollout by exact qualified target without changing manual offers",()=>{
+ const base=product.channels.stable;
+ expect(automaticInstallAllowed(base,'darwin','aarch64')).toBe(false);
+ expect(automaticInstallAllowed({...base,automaticInstall:true},'linux','aarch64')).toBe(true);
+ const rule={...base,automaticInstall:true,automaticInstallTargets:['darwin-aarch64','windows-x86_64']};
+ expect(automaticInstallAllowed(rule,'darwin','aarch64')).toBe(true);
+ expect(automaticInstallAllowed(rule,'windows','x86_64')).toBe(true);
+ expect(automaticInstallAllowed(rule,'darwin','x86_64')).toBe(false);
+ expect(automaticInstallAllowed(rule,'linux','aarch64')).toBe(false);
+ expect(automaticInstallAllowed({...rule,automaticInstall:false},'darwin','aarch64')).toBe(false);
+ expect(automaticInstallAllowed({...rule,automaticInstallTargets:[]},'darwin','aarch64')).toBe(false);
 });

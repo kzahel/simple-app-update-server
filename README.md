@@ -274,6 +274,9 @@ never needs database contents or paths. A required-metadata policy has its own
 cache namespace, keeping legacy disk fallbacks out of the new contract.
 
 A channel may set `automaticInstall: true` to permit unattended installation.
+An optional `automaticInstallTargets` array narrows it to exact updater target
+keys such as `darwin-aarch64`; an empty list permits no targets. This lets
+installed qualification proceed separately for each OS/architecture.
 The platform response carries `X-Automatic-Install: true|false`, including 204
 responses; absence defaults off in capable native clients. Manual installation
 is unaffected. An explicitly pinned trial may override this for its installation
